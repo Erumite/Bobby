@@ -1,0 +1,18 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.rmeta
+
+# Local runtime settings
+bobby_config.json
+
+# Operating system files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.iml
