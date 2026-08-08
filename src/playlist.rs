@@ -130,6 +130,24 @@ impl Playlist {
         }
     }
 
+    pub fn remove_selected(&mut self) -> usize {
+        let current_path = self.current_track().map(|t| t.path.clone());
+        let initial_len = self.tracks.len();
+        self.tracks.retain(|t| !t.selected);
+        let removed_count = initial_len - self.tracks.len();
+
+        if let Some(cp) = current_path {
+            self.current_index = self.tracks.iter().position(|t| t.path == cp);
+        } else if let Some(curr) = self.current_index {
+            if curr >= self.tracks.len() && !self.tracks.is_empty() {
+                self.current_index = Some(self.tracks.len() - 1);
+            } else if self.tracks.is_empty() {
+                self.current_index = None;
+            }
+        }
+        removed_count
+    }
+
     pub fn current_track(&self) -> Option<&Track> {
         self.current_index.and_then(|i| self.tracks.get(i))
     }

@@ -12,7 +12,6 @@ pub struct AudioPlayer {
     sink: Option<Sink>,
     volume: f32,
     muted: bool,
-    temp_muted: bool,
     start_time: Option<Instant>,
     playing_path: Option<String>,
     is_paused: Arc<AtomicBool>,
@@ -34,7 +33,6 @@ impl AudioPlayer {
             sink: None,
             volume: 1.0,
             muted: false,
-            temp_muted: false,
             start_time: None,
             playing_path: None,
             is_paused: Arc::new(AtomicBool::new(false)),
@@ -44,8 +42,6 @@ impl AudioPlayer {
     fn effective_volume(&self) -> f32 {
         if self.muted {
             0.0
-        } else if self.temp_muted {
-            self.volume * 0.7
         } else {
             self.volume
         }
@@ -107,10 +103,6 @@ impl AudioPlayer {
         }
     }
 
-    pub fn volume(&self) -> f32 {
-        self.volume
-    }
-
     pub fn toggle_mute(&mut self) -> bool {
         self.muted = !self.muted;
         let eff = self.effective_volume();
@@ -122,18 +114,6 @@ impl AudioPlayer {
 
     pub fn is_muted(&self) -> bool {
         self.muted
-    }
-
-    pub fn toggle_temp_mute(&mut self) {
-        self.temp_muted = !self.temp_muted;
-        let eff = self.effective_volume();
-        if let Some(sink) = &self.sink {
-            sink.set_volume(eff);
-        }
-    }
-
-    pub fn is_temp_muted(&self) -> bool {
-        self.temp_muted
     }
 
     pub fn is_playing(&self) -> bool {

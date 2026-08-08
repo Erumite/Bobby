@@ -26,18 +26,30 @@ fn load_icon() -> eframe::egui::IconData {
 
 fn main() -> eframe::Result<()> {
     let icon = load_icon();
+    let config = config::AppConfig::load();
+
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_title("Bobby")
+        .with_min_inner_size(Vec2::new(450.0, 300.0))
+        .with_icon(icon);
+
+    if let (Some(w), Some(h)) = (config.window_width, config.window_height) {
+        viewport = viewport.with_inner_size(Vec2::new(w, h));
+    } else {
+        viewport = viewport.with_inner_size(Vec2::new(680.0, 480.0));
+    }
+
+    if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
+        viewport = viewport.with_position(eframe::egui::Pos2::new(x, y));
+    }
 
     let native_options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Bobby - No Nonsense Audio Player")
-            .with_inner_size(Vec2::new(680.0, 480.0))
-            .with_min_inner_size(Vec2::new(450.0, 300.0))
-            .with_icon(icon),
+        viewport,
         ..Default::default()
     };
 
     eframe::run_native(
-        "Bobby Audio Player",
+        "Bobby",
         native_options,
         Box::new(|cc| Box::new(BobbyApp::new(cc))),
     )

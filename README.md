@@ -1,4 +1,6 @@
-# Bobby — No-Nonsense Linux Audio Player
+# Bobby — Tiny Linux Audio Player
+
+![icon](assets/bobby.png)
 
 Bobby is a lightweight, fast, directory-based audio player for Linux inspired by [Billy](https://github.com/zQueal/Billy).
 
@@ -66,14 +68,21 @@ cargo build --release
 
 | Shortcut | Action |
 | :--- | :--- |
+| `F1` | Toggle keyboard shortcuts guide |
 | `F4` | Open directory selection dialog |
 | `F5` | Refresh current directory for new/removed files |
 | `F8` | Toggle parent subfolder view mode |
 | `F2` | Rename single track or launch batch file replacer |
-| `Space` | Play / Pause playback |
-| `Ctrl + Space` | Reset volume to 100% |
-| `Ctrl + M` | Cycle playmodes (Normal, Single, Repeat All, Repeat 1, Shuffle) |
+| `Del` | Remove selected track(s) from playlist |
 | `Ctrl + Del` | Crop playlist to selected items |
-| `V` | Quick lower volume by 30% |
+| `Space` | Play / Pause playback |
+| `Ctrl + 1..0` | Set volume in 10% increments (`Ctrl+1` = 10%, `Ctrl+0` = 100%) |
+| `Ctrl + M` | Cycle playmodes (Normal, Single, Repeat All, Repeat 1, Shuffle) |
 | `Home` | Jump to top of playlist |
 | `/` or `F3` | Open Easy Finder instant search modal |
+
+---
+
+Simple UI Preview:
+
+![UIPreview](assets/ui.webp)

@@ -223,18 +223,33 @@ impl BobbyApp {
             }
             // Space: Toggle Play / Pause / Stop
             if i.key_pressed(Key::Space) {
-                if i.modifiers.ctrl {
-                    // Ctrl + Space: Reset audio mixer volume
-                    self.audio.set_volume(1.0);
-                    self.config.volume = 1.0;
-                    self.config.save();
-                    self.set_status("Volume reset to 100%");
-                } else if self.audio.is_playing() {
+                if self.audio.is_playing() {
                     self.audio.toggle_pause();
                 } else if let Some(idx) = self.playlist.current_index {
                     self.play_track_at(idx);
                 } else if !self.playlist.tracks.is_empty() {
                     self.play_track_at(0);
+                }
+            }
+            // Ctrl + 1..0: Set volume in 10% increments
+            if i.modifiers.ctrl {
+                let new_vol = if i.key_pressed(Key::Num1) { Some(0.10) }
+                else if i.key_pressed(Key::Num2) { Some(0.20) }
+                else if i.key_pressed(Key::Num3) { Some(0.30) }
+                else if i.key_pressed(Key::Num4) { Some(0.40) }
+                else if i.key_pressed(Key::Num5) { Some(0.50) }
+                else if i.key_pressed(Key::Num6) { Some(0.60) }
+                else if i.key_pressed(Key::Num7) { Some(0.70) }
+                else if i.key_pressed(Key::Num8) { Some(0.80) }
+                else if i.key_pressed(Key::Num9) { Some(0.90) }
+                else if i.key_pressed(Key::Num0) { Some(1.00) }
+                else { None };
+
+                if let Some(vol) = new_vol {
+                    self.config.volume = vol;
+                    self.audio.set_volume(vol);
+                    self.config.save();
+                    self.set_status(&format!("Volume set to {:.0}%", vol * 100.0));
                 }
             }
             // Enter: Play selected track
@@ -256,29 +271,28 @@ impl BobbyApp {
                 self.config.save();
                 self.set_status(&format!("Play mode: {:?}", self.config.play_mode));
             }
-            // Ctrl + Delete: Crop playlist to selected tracks
-            if i.key_pressed(Key::Delete) && i.modifiers.ctrl {
-                self.playlist.crop_to_selected();
-                self.set_status("Playlist cropped to selected items");
+            // F1: Toggle shortcuts guide
+            if i.key_pressed(Key::F1) {
+                self.show_shortcuts = !self.show_shortcuts;
             }
-            // Key V: Temp lower volume by 30% (-30% Mute toggle)
-            if i.key_pressed(Key::V) {
-                self.audio.toggle_temp_mute();
-                let status = if self.audio.is_temp_muted() { "-30% Muted" } else { "Normal" };
-                self.set_status(&format!("Quick Volume Attenuation: {}", status));
+            // Delete: Remove selected file(s) from playlist (or Ctrl+Delete to crop)
+            if i.key_pressed(Key::Delete) {
+                if i.modifiers.ctrl {
+                    self.playlist.crop_to_selected();
+                    self.set_status("Playlist cropped to selected items");
+                } else {
+                    let count = self.playlist.remove_selected();
+                    if count > 0 {
+                        self.set_status(&format!("Removed {} item(s) from playlist", count));
+                    }
+                }
             }
             // Home / Tilde: Jump to top
             if i.key_pressed(Key::Home) {
                 self.set_status("Jumped to top");
             }
-            // Slash or F3: ? (Shift+/) opens shortcuts guide; / opens Easy Finder
-            if i.key_pressed(Key::Slash) {
-                if i.modifiers.shift {
-                    self.show_shortcuts = true;
-                } else {
-                    self.show_easy_finder = true;
-                }
-            } else if i.key_pressed(Key::F3) {
+            // Slash or F3: Easy Finder
+            if i.key_pressed(Key::Slash) || i.key_pressed(Key::F3) {
                 self.show_easy_finder = true;
             }
         });
@@ -298,6 +312,39 @@ impl eframe::App for BobbyApp {
             self.next_track();
         }
 
+        // Track and persist window geometry changes
+        let screen_rect = ctx.screen_rect();
+        let cur_w = screen_rect.width();
+        let cur_h = screen_rect.height();
+
+        if cur_w >= 200.0 && cur_h >= 200.0 {
+            let mut changed = false;
+            if self.config.window_width != Some(cur_w) {
+                self.config.window_width = Some(cur_w);
+                changed = true;
+            }
+            if self.config.window_height != Some(cur_h) {
+                self.config.window_height = Some(cur_h);
+                changed = true;
+            }
+
+            if let Some(outer_rect) = ctx.input(|i| i.viewport().outer_rect) {
+                let pos = outer_rect.min;
+                if self.config.window_x != Some(pos.x) {
+                    self.config.window_x = Some(pos.x);
+                    changed = true;
+                }
+                if self.config.window_y != Some(pos.y) {
+                    self.config.window_y = Some(pos.y);
+                    changed = true;
+                }
+            }
+
+            if changed {
+                self.config.save();
+            }
+        }
+
         self.handle_keyboard_shortcuts(ctx);
 
         // Retro dark navy theme styling
@@ -311,14 +358,19 @@ impl eframe::App for BobbyApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("❓").on_hover_text("View keyboard shortcuts guide").clicked() {
+                if ui.button("❓").on_hover_text("View keyboard shortcuts guide [F1]").clicked() {
                     self.show_shortcuts = true;
+                }
+                if ui.button(RichText::new("❤").color(Color32::from_rgb(245, 75, 75)))
+                    .on_hover_text("Support Bobby on Ko-fi (https://ko-fi.com/eremite)")
+                    .clicked()
+                {
+                    let _ = webbrowser::open("https://ko-fi.com/eremite");
                 }
 
                 ui.separator();
 
-                ui.heading(RichText::new("BOBBY").strong().color(Color32::from_rgb(80, 190, 250)));
-                ui.label(RichText::new("v1.0.2 (Linux Native)").small().color(Color32::GRAY));
+                ui.heading(RichText::new("Bobby").strong().color(Color32::from_rgb(80, 190, 250)));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (l, r) = self.audio.get_levels();
@@ -452,11 +504,24 @@ impl eframe::App for BobbyApp {
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(ui, 22.0, visible_indices.len(), |ui, row_range| {
-                    for i in row_range {
-                        if let Some(&track_idx) = visible_indices.get(i) {
+                    let avail_w = ui.available_width();
+                    let max_line_chars = ((avail_w - 16.0) / 7.5).max(12.0) as usize;
+
+                    for row_i in row_range {
+                        if let Some(&track_idx) = visible_indices.get(row_i) {
                             let is_current = self.playlist.current_index == Some(track_idx);
                             let track = &mut self.playlist.tracks[track_idx];
                             let is_selected = track.selected;
+
+                            // Zebra striping background for odd rows
+                            let row_rect = Rect::from_min_size(
+                                ui.cursor().min,
+                                Vec2::new(avail_w, 22.0),
+                            );
+
+                            if row_i % 2 == 1 && !is_selected && !is_current {
+                                ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgb(24, 30, 39));
+                            }
 
                             let text_color = if is_current {
                                 Color32::from_rgb(100, 220, 255)
@@ -465,7 +530,13 @@ impl eframe::App for BobbyApp {
                             };
 
                             let icon = if is_current && self.audio.is_playing() { "▶ " } else { "   " };
-                            let label_text = format!("{}{:03}. {}", icon, track_idx + 1, track.display_name(show_parent));
+                            let prefix_str = format!("{}{:03}. ", icon, track_idx + 1);
+                            let prefix_chars = prefix_str.chars().count();
+                            let name_max_chars = max_line_chars.saturating_sub(prefix_chars);
+
+                            let raw_name = track.display_name(show_parent);
+                            let truncated_name = truncate_filename_middle(&raw_name, name_max_chars);
+                            let label_text = format!("{}{}", prefix_str, truncated_name);
 
                             let response = ui.selectable_label(
                                 is_selected || is_current,
@@ -581,27 +652,51 @@ impl eframe::App for BobbyApp {
                         ui.label(RichText::new("Action").strong());
                         ui.end_row();
 
-                        ui.label("? (Shift+/)"); ui.label("Open keyboard shortcuts guide"); ui.end_row();
-                        ui.label("Esc"); ui.label("Close shortcuts guide / active modal"); ui.end_row();
-                        ui.label("M"); ui.label("Toggle audio mute"); ui.end_row();
+                        ui.label("F1"); ui.label("Toggle keyboard shortcuts guide"); ui.end_row();
                         ui.label("F4"); ui.label("Open folder select dialog"); ui.end_row();
                         ui.label("F5"); ui.label("Refresh folder for new / removed files"); ui.end_row();
                         ui.label("F8"); ui.label("Toggle parent folder path view"); ui.end_row();
                         ui.label("F2"); ui.label("Rename file or launch batch replacer"); ui.end_row();
-                        ui.label("Space"); ui.label("Play / Pause audio track"); ui.end_row();
-                        ui.label("Ctrl + Space"); ui.label("Reset volume to 100%"); ui.end_row();
-                        ui.label("Ctrl + M"); ui.label("Cycle playmode (Normal, Single, Repeat All, Repeat 1, Shuffle)"); ui.end_row();
+                        ui.label("Del"); ui.label("Remove selected file(s) from playlist"); ui.end_row();
                         ui.label("Ctrl + Del"); ui.label("Crop playlist to selected tracks"); ui.end_row();
-                        ui.label("V"); ui.label("Quick lower volume by 30%"); ui.end_row();
+                        ui.label("Space"); ui.label("Play / Pause audio track"); ui.end_row();
+                        ui.label("Ctrl + 1..0"); ui.label("Set volume in 10% increments (Ctrl+1=10%, Ctrl+0=100%)"); ui.end_row();
+                        ui.label("Ctrl + M"); ui.label("Cycle playmode (Normal, Single, Repeat All, Repeat 1, Shuffle)"); ui.end_row();
                         ui.label("Home"); ui.label("Jump to top of playlist"); ui.end_row();
                         ui.label("/ or F3"); ui.label("Pop up Easy Finder instant search"); ui.end_row();
                     });
                     ui.add_space(8.0);
-                    if ui.button("Close (Esc)").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                    if ui.button("Close (F1)").clicked() {
                         self.show_shortcuts = false;
                     }
                 });
         }
     }
+}
+
+fn truncate_filename_middle(name: &str, max_chars: usize) -> String {
+    let total_chars = name.chars().count();
+    if total_chars <= max_chars || max_chars < 8 {
+        return name.to_string();
+    }
+
+    if let Some(dot_idx) = name.rfind('.') {
+        let ext = &name[dot_idx..];
+        let stem = &name[..dot_idx];
+        let ext_chars_len = ext.chars().count();
+
+        if ext_chars_len + 3 < max_chars {
+            let available_stem = max_chars - 3 - ext_chars_len;
+            let stem_chars: Vec<char> = stem.chars().collect();
+            if stem_chars.len() > available_stem {
+                let prefix: String = stem_chars[..available_stem].iter().collect();
+                return format!("{}...{}", prefix, ext);
+            }
+        }
+    }
+
+    let chars: Vec<char> = name.chars().collect();
+    let prefix_len = max_chars.saturating_sub(3);
+    format!("{}...", chars[..prefix_len].iter().collect::<String>())
 }
 
