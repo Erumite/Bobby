@@ -17,6 +17,51 @@ Bobby is a lightweight, fast, directory-based audio player for Linux inspired by
 
 ---
 
+## Installation & Setup
+
+### Option 1: Download Release Binary (Recommended)
+
+1. Download `bobby-linux-x86_64.tar.gz` from the [Releases](https://github.com/Erumite/Bobby/releases) page.
+2. Extract the archive:
+   ```bash
+   tar -xvf bobby-linux-x86_64.tar.gz
+   ```
+3. Copy the binary to your local bin path:
+   ```bash
+   mkdir -p ~/.local/bin ~/.local/share/applications
+   cp bobby ~/.local/bin/
+   chmod +x ~/.local/bin/bobby
+   ```
+4. Register file associations for Dolphin / KDE / GNOME:
+   ```bash
+   cp bobby.desktop ~/.local/share/applications/
+   update-desktop-database ~/.local/share/applications
+   ```
+5. Right-click any `.mp3` or audio file in Dolphin / file manager -> **Open With** -> Select **Bobby** (or set as Default Application).
+
+---
+
+### Option 2: Build From Source
+
+#### Requirements
+- Rust toolchain (`cargo`, `rustc`)
+- `alsa-lib` development headers (e.g. `brew install alsa-lib` or `sudo apt install libasound2-dev pkg-config`)
+
+#### Build & Install
+Run the automated installer script:
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+Or build manually:
+```bash
+cargo build --release
+./target/release/bobby
+```
+
+---
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -27,26 +72,8 @@ Bobby is a lightweight, fast, directory-based audio player for Linux inspired by
 | `F2` | Rename single track or launch batch file replacer |
 | `Space` | Play / Pause playback |
 | `Ctrl + Space` | Reset volume to 100% |
-| `Ctrl + M` | Cycle playmodes (Normal, Shuffle, Repeat All, Repeat 1) |
+| `Ctrl + M` | Cycle playmodes (Normal, Single, Repeat All, Repeat 1, Shuffle) |
 | `Ctrl + Del` | Crop playlist to selected items |
 | `V` | Quick lower volume by 30% |
 | `Home` | Jump to top of playlist |
 | `/` or `F3` | Open Easy Finder instant search modal |
-
----
-
-## Building & Running
-
-### Requirements
-- Rust toolchain (`cargo`, `rustc`)
-- `alsa-lib` development headers (e.g. `brew install alsa-lib` or `apt install libasound2-dev`)
-
-### Build
-```bash
-cargo build --release
-```
-
-### Run
-```bash
-cargo run --release
-```

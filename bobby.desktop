@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Bobby
+GenericName=Audio Player
+Comment=Fast, no-nonsense directory-based audio player
+Exec=bobby %F
+Icon=multimedia-audio-player
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/flac;audio/ogg;audio/wav;audio/mp4;audio/aac;audio/opus;audio/x-wav;audio/x-flac;audio/x-mp3;
+Keywords=Audio;Music;Player;MP3;FLAC;

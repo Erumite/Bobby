@@ -38,6 +38,7 @@ jobs:
         run: |
           mkdir -p release_package
           cp target/release/bobby release_package/
+          cp bobby.desktop release_package/
           cp README.md release_package/
           cp LICENSE.md release_package/ 2>/dev/null || true
           tar -czvf bobby-linux-x86_64.tar.gz -C release_package .

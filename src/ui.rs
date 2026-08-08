@@ -5,6 +5,7 @@ use eframe::egui::{
     self, Align, Color32, Context, Key, Layout, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Vec2,
 };
 use rfd::FileDialog;
+use std::path::PathBuf;
 
 pub struct BobbyApp {
     audio: AudioPlayer,
@@ -44,7 +45,28 @@ impl BobbyApp {
             status_msg: "Ready".to_string(),
         };
 
-        if let Some(ref folder) = app.config.last_folder.clone() {
+        let initial_arg = std::env::args().nth(1).map(PathBuf::from);
+
+        if let Some(arg_path) = initial_arg {
+            if arg_path.is_file() {
+                if let Some(parent) = arg_path.parent() {
+                    app.playlist.load_directory(parent);
+                    app.config.last_folder = Some(parent.to_path_buf());
+                    app.config.save();
+                    if let Some(pos) = app.playlist.tracks.iter().position(|t| t.path == arg_path) {
+                        app.play_track_at(pos);
+                    }
+                }
+            } else if arg_path.is_dir() {
+                let count = app.playlist.load_directory(&arg_path);
+                app.config.last_folder = Some(arg_path.clone());
+                app.config.save();
+                app.set_status(&format!("Loaded {} tracks", count));
+                if count > 0 {
+                    app.play_track_at(0);
+                }
+            }
+        } else if let Some(ref folder) = app.config.last_folder.clone() {
             if folder.exists() {
                 let count = app.playlist.load_directory(folder);
                 app.set_status(&format!("Loaded {} tracks from last folder", count));
