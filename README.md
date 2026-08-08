@@ -1,8 +1,7 @@
 # Bobby — Tiny Linux Audio Player
+Bobby is a lightweight, fast, directory-based audio player written in Rust for Linux inspired by [Billy](https://github.com/zQueal/Billy).
 
 ![icon](assets/bobby.png)
-
-Bobby is a lightweight, fast, directory-based audio player written in Rust for Linux inspired by [Billy](https://github.com/zQueal/Billy).
 
 ---
 
