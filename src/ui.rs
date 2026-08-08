@@ -22,6 +22,7 @@ pub struct BobbyApp {
     single_rename_text: String,
     single_rename_idx: Option<usize>,
 
+    scrubbing_pos: Option<f32>,
     status_msg: String,
 }
 
@@ -42,6 +43,7 @@ impl BobbyApp {
             rename_replacement: String::new(),
             single_rename_text: String::new(),
             single_rename_idx: None,
+            scrubbing_pos: None,
             status_msg: "Ready".to_string(),
         };
 
@@ -507,21 +509,34 @@ impl eframe::App for BobbyApp {
                 let total_secs = dur.map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let cur_secs = cur_pos.as_secs_f32().min(total_secs);
 
-                let elapsed_str = format_duration_str(cur_pos);
+                let display_secs = self.scrubbing_pos.unwrap_or(cur_secs);
+                let elapsed_str = format_duration_str(std::time::Duration::from_secs_f32(display_secs));
                 let duration_str = dur.map(format_duration_str).unwrap_or_else(|| "--:--".to_string());
 
                 ui.label(RichText::new(elapsed_str).small().monospace().color(Color32::from_rgb(180, 220, 250)));
 
                 if total_secs > 0.0 {
-                    ui.scope(|ui| {
+                    let mut seek_val = display_secs;
+                    let (slider_res, new_val) = ui.scope(|ui| {
                         let avail_seek_w = (ui.available_width() - 55.0).max(40.0);
                         ui.spacing_mut().slider_width = avail_seek_w;
-                        let mut seek_val = cur_secs;
-                        if ui.add(egui::Slider::new(&mut seek_val, 0.0..=total_secs).show_value(false)).changed() {
-                            self.audio.seek_to(std::time::Duration::from_secs_f32(seek_val));
-                        }
-                    });
+                        let res = ui.add(egui::Slider::new(&mut seek_val, 0.0..=total_secs).show_value(false));
+                        (res, seek_val)
+                    }).inner;
+
+                    if slider_res.dragged() {
+                        self.scrubbing_pos = Some(new_val);
+                    }
+
+                    if slider_res.drag_stopped() {
+                        let target_pos = self.scrubbing_pos.take().unwrap_or(new_val);
+                        self.audio.seek_to(std::time::Duration::from_secs_f32(target_pos));
+                    } else if slider_res.clicked() && !slider_res.dragged() {
+                        self.audio.seek_to(std::time::Duration::from_secs_f32(new_val));
+                        self.scrubbing_pos = None;
+                    }
                 } else {
+                    self.scrubbing_pos = None;
                     ui.scope(|ui| {
                         let avail_seek_w = (ui.available_width() - 55.0).max(40.0);
                         ui.spacing_mut().slider_width = avail_seek_w;
