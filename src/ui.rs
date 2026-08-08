@@ -163,6 +163,30 @@ impl BobbyApp {
         }
 
         ctx.input(|i| {
+            // Escape: Close active modals (Shortcuts, Easy Finder, Batch Rename, Single Rename)
+            if i.key_pressed(Key::Escape) {
+                if self.show_shortcuts {
+                    self.show_shortcuts = false;
+                } else if self.show_easy_finder {
+                    self.show_easy_finder = false;
+                } else if self.show_batch_rename {
+                    self.show_batch_rename = false;
+                } else if self.single_rename_idx.is_some() {
+                    self.single_rename_idx = None;
+                }
+            }
+
+            // Key M (without Ctrl): Toggle Mute
+            if i.key_pressed(Key::M) && !i.modifiers.ctrl {
+                let muted = self.audio.toggle_mute();
+                let status = if muted {
+                    "Audio Muted".to_string()
+                } else {
+                    format!("Audio Unmuted ({:.0}%)", self.config.volume * 100.0)
+                };
+                self.set_status(&status);
+            }
+
             // F4: Open Folder
             if i.key_pressed(Key::F4) {
                 self.open_folder_dialog();
@@ -247,12 +271,19 @@ impl BobbyApp {
             if i.key_pressed(Key::Home) {
                 self.set_status("Jumped to top");
             }
-            // Slash or F3: Open Easy Finder
-            if i.key_pressed(Key::Slash) || i.key_pressed(Key::F3) {
+            // Slash or F3: ? (Shift+/) opens shortcuts guide; / opens Easy Finder
+            if i.key_pressed(Key::Slash) {
+                if i.modifiers.shift {
+                    self.show_shortcuts = true;
+                } else {
+                    self.show_easy_finder = true;
+                }
+            } else if i.key_pressed(Key::F3) {
                 self.show_easy_finder = true;
             }
         });
     }
+
 }
 
 impl eframe::App for BobbyApp {
@@ -287,7 +318,7 @@ impl eframe::App for BobbyApp {
                 ui.separator();
 
                 ui.heading(RichText::new("BOBBY").strong().color(Color32::from_rgb(80, 190, 250)));
-                ui.label(RichText::new("v1.0.0 (Linux Native)").small().color(Color32::GRAY));
+                ui.label(RichText::new("v1.0.2 (Linux Native)").small().color(Color32::GRAY));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (l, r) = self.audio.get_levels();
@@ -356,8 +387,31 @@ impl eframe::App for BobbyApp {
 
                 ui.separator();
 
-                // Volume slider dynamically stretching across remaining width
-                ui.label("🔊");
+                // Volume mute toggle button & slider dynamically stretching across remaining width
+                let vol_icon = if self.audio.is_muted() || self.config.volume == 0.0 {
+                    "🔇"
+                } else if self.config.volume < 0.3 {
+                    "🔉"
+                } else {
+                    "🔊"
+                };
+
+                let mute_tooltip = if self.audio.is_muted() {
+                    "Unmute (M)"
+                } else {
+                    "Mute (M)"
+                };
+
+                if ui.button(vol_icon).on_hover_text(mute_tooltip).clicked() {
+                    let muted = self.audio.toggle_mute();
+                    let status = if muted {
+                        "Audio Muted".to_string()
+                    } else {
+                        format!("Audio Unmuted ({:.0}%)", self.config.volume * 100.0)
+                    };
+                    self.set_status(&status);
+                }
+
                 ui.scope(|ui| {
                     let available_slider_w = (ui.available_width() - 48.0).max(40.0);
                     ui.spacing_mut().slider_width = available_slider_w;
@@ -395,39 +449,43 @@ impl eframe::App for BobbyApp {
             let visible_indices = self.playlist.visible_indices();
             let show_parent = self.config.show_parent_folders;
 
-            ScrollArea::vertical().show_rows(ui, 22.0, visible_indices.len(), |ui, row_range| {
-                for i in row_range {
-                    if let Some(&track_idx) = visible_indices.get(i) {
-                        let is_current = self.playlist.current_index == Some(track_idx);
-                        let track = &mut self.playlist.tracks[track_idx];
-                        let is_selected = track.selected;
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, 22.0, visible_indices.len(), |ui, row_range| {
+                    for i in row_range {
+                        if let Some(&track_idx) = visible_indices.get(i) {
+                            let is_current = self.playlist.current_index == Some(track_idx);
+                            let track = &mut self.playlist.tracks[track_idx];
+                            let is_selected = track.selected;
 
-                        let text_color = if is_current {
-                            Color32::from_rgb(100, 220, 255)
-                        } else {
-                            Color32::from_rgb(220, 230, 240)
-                        };
+                            let text_color = if is_current {
+                                Color32::from_rgb(100, 220, 255)
+                            } else {
+                                Color32::from_rgb(220, 230, 240)
+                            };
 
-                        let icon = if is_current && self.audio.is_playing() { "▶ " } else { "   " };
-                        let label_text = format!("{}{:03}. {}", icon, track_idx + 1, track.display_name(show_parent));
+                            let icon = if is_current && self.audio.is_playing() { "▶ " } else { "   " };
+                            let label_text = format!("{}{:03}. {}", icon, track_idx + 1, track.display_name(show_parent));
 
-                        let response = ui.selectable_label(
-                            is_selected || is_current,
-                            RichText::new(label_text).color(text_color),
-                        );
+                            let response = ui.selectable_label(
+                                is_selected || is_current,
+                                RichText::new(label_text).color(text_color),
+                            );
 
-                        if response.double_clicked() {
-                            self.play_track_at(track_idx);
-                        } else if response.clicked() {
-                            if !ui.input(|inp| inp.modifiers.ctrl) {
-                                self.playlist.select_all(false);
+                            if response.double_clicked() {
+                                self.play_track_at(track_idx);
+                            } else if response.clicked() {
+                                if !ui.input(|inp| inp.modifiers.ctrl) {
+                                    self.playlist.select_all(false);
+                                }
+                                self.playlist.tracks[track_idx].selected = !is_selected;
                             }
-                            self.playlist.tracks[track_idx].selected = !is_selected;
                         }
                     }
-                }
-            });
+                });
+
         });
+
 
         // Easy Finder Modal Overlay
         if self.show_easy_finder {
@@ -444,7 +502,7 @@ impl eframe::App for BobbyApp {
                         if ui.button("Clear Search").clicked() {
                             self.playlist.filter.clear();
                         }
-                        if ui.button("Close").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button("Close (Esc)").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             self.show_easy_finder = false;
                         }
                     });
@@ -523,6 +581,9 @@ impl eframe::App for BobbyApp {
                         ui.label(RichText::new("Action").strong());
                         ui.end_row();
 
+                        ui.label("? (Shift+/)"); ui.label("Open keyboard shortcuts guide"); ui.end_row();
+                        ui.label("Esc"); ui.label("Close shortcuts guide / active modal"); ui.end_row();
+                        ui.label("M"); ui.label("Toggle audio mute"); ui.end_row();
                         ui.label("F4"); ui.label("Open folder select dialog"); ui.end_row();
                         ui.label("F5"); ui.label("Refresh folder for new / removed files"); ui.end_row();
                         ui.label("F8"); ui.label("Toggle parent folder path view"); ui.end_row();
@@ -536,10 +597,11 @@ impl eframe::App for BobbyApp {
                         ui.label("/ or F3"); ui.label("Pop up Easy Finder instant search"); ui.end_row();
                     });
                     ui.add_space(8.0);
-                    if ui.button("Close").clicked() {
+                    if ui.button("Close (Esc)").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                         self.show_shortcuts = false;
                     }
                 });
         }
     }
 }
+

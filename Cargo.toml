@@ -1,6 +1,6 @@
 [package]
 name = "bobby"
-version = "0.1.0"
+version = "1.0.2"
 edition = "2021"
 description = "Fast, no-nonsense directory-based audio player for Linux"
 
@@ -14,3 +14,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rand = "0.8"
 regex = "1.10"
+image = "0.24"
+
+
+[build-dependencies]
+winres = "0.1"

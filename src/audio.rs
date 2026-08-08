@@ -11,6 +11,7 @@ pub struct AudioPlayer {
     stream_handle: Option<OutputStreamHandle>,
     sink: Option<Sink>,
     volume: f32,
+    muted: bool,
     temp_muted: bool,
     start_time: Option<Instant>,
     playing_path: Option<String>,
@@ -32,10 +33,21 @@ impl AudioPlayer {
             stream_handle,
             sink: None,
             volume: 1.0,
+            muted: false,
             temp_muted: false,
             start_time: None,
             playing_path: None,
             is_paused: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn effective_volume(&self) -> f32 {
+        if self.muted {
+            0.0
+        } else if self.temp_muted {
+            self.volume * 0.7
+        } else {
+            self.volume
         }
     }
 
@@ -52,7 +64,7 @@ impl AudioPlayer {
         let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
 
         let sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
-        sink.set_volume(if self.temp_muted { self.volume * 0.7 } else { self.volume });
+        sink.set_volume(self.effective_volume());
         sink.append(decoder);
         sink.play();
 
@@ -87,8 +99,11 @@ impl AudioPlayer {
 
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
+        if self.muted && self.volume > 0.0 {
+            self.muted = false;
+        }
         if let Some(sink) = &self.sink {
-            sink.set_volume(if self.temp_muted { self.volume * 0.7 } else { self.volume });
+            sink.set_volume(self.effective_volume());
         }
     }
 
@@ -96,11 +111,24 @@ impl AudioPlayer {
         self.volume
     }
 
+    pub fn toggle_mute(&mut self) -> bool {
+        self.muted = !self.muted;
+        let eff = self.effective_volume();
+        if let Some(sink) = &self.sink {
+            sink.set_volume(eff);
+        }
+        self.muted
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.muted
+    }
+
     pub fn toggle_temp_mute(&mut self) {
         self.temp_muted = !self.temp_muted;
-        let effective = if self.temp_muted { self.volume * 0.7 } else { self.volume };
+        let eff = self.effective_volume();
         if let Some(sink) = &self.sink {
-            sink.set_volume(effective);
+            sink.set_volume(eff);
         }
     }
 
@@ -132,7 +160,7 @@ impl AudioPlayer {
 
         if let Some(start) = self.start_time {
             let elapsed = start.elapsed().as_secs_f32();
-            let vol = if self.temp_muted { self.volume * 0.7 } else { self.volume };
+            let vol = self.effective_volume();
             
             // Dynamic LED VU visualization simulation based on audio playback harmonics
             let l = ((elapsed * 12.0).sin().abs() * 0.7 + (elapsed * 23.0).cos().abs() * 0.3) * vol;
@@ -143,3 +171,4 @@ impl AudioPlayer {
         }
     }
 }
+
