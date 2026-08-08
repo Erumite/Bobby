@@ -1,6 +1,6 @@
 [package]
 name = "bobby"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 description = "Fast, no-nonsense directory-based audio player for Linux"
 
@@ -17,6 +17,7 @@ regex = "1.10"
 image = "0.24"
 webbrowser = "1.0"
 mp3-duration = "0.1.10"
+id3 = "1.13"
 
 
 [build-dependencies]

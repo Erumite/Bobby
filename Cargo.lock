@@ -653,6 +653,7 @@ version = "1.0.4"
 dependencies = [
  "eframe",
  "egui",
+ "id3",
  "image",
  "mp3-duration",
  "rand",
@@ -1953,6 +1954,17 @@ dependencies = [
  "zerofrom",
  "zerotrie",
  "zerovec",
+]
+
+[[package]]
+name = "id3"
+version = "1.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24993fcabcbc07c8ac076a8e62db8593d1a5c4dbe81d57e531d2b7cb7f737380"
+dependencies = [
+ "bitflags 2.13.1",
+ "byteorder",
+ "flate2",
 ]
 
 [[package]]

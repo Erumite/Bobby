@@ -120,6 +120,76 @@ impl Playlist {
         }
     }
 
+    pub fn select_next(&mut self) {
+        let visible = self.visible_indices();
+        if visible.is_empty() { return; }
+
+        let selected = self.selected_indices();
+        let next_idx = if let Some(&last_sel) = selected.last() {
+            if let Some(pos) = visible.iter().position(|&i| i == last_sel) {
+                if pos + 1 < visible.len() {
+                    visible[pos + 1]
+                } else {
+                    visible[visible.len() - 1]
+                }
+            } else {
+                visible[0]
+            }
+        } else if let Some(curr) = self.current_index {
+            if let Some(pos) = visible.iter().position(|&i| i == curr) {
+                if pos + 1 < visible.len() {
+                    visible[pos + 1]
+                } else {
+                    visible[visible.len() - 1]
+                }
+            } else {
+                visible[0]
+            }
+        } else {
+            visible[0]
+        };
+
+        self.select_all(false);
+        if let Some(t) = self.tracks.get_mut(next_idx) {
+            t.selected = true;
+        }
+    }
+
+    pub fn select_prev(&mut self) {
+        let visible = self.visible_indices();
+        if visible.is_empty() { return; }
+
+        let selected = self.selected_indices();
+        let prev_idx = if let Some(&first_sel) = selected.first() {
+            if let Some(pos) = visible.iter().position(|&i| i == first_sel) {
+                if pos > 0 {
+                    visible[pos - 1]
+                } else {
+                    visible[0]
+                }
+            } else {
+                visible[0]
+            }
+        } else if let Some(curr) = self.current_index {
+            if let Some(pos) = visible.iter().position(|&i| i == curr) {
+                if pos > 0 {
+                    visible[pos - 1]
+                } else {
+                    visible[0]
+                }
+            } else {
+                visible[0]
+            }
+        } else {
+            visible[0]
+        };
+
+        self.select_all(false);
+        if let Some(t) = self.tracks.get_mut(prev_idx) {
+            t.selected = true;
+        }
+    }
+
     pub fn crop_to_selected(&mut self) {
         let current_path = self.current_track().map(|t| t.path.clone());
         self.tracks.retain(|t| t.selected);

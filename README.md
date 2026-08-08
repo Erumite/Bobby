@@ -18,6 +18,7 @@ Bobby is a lightweight, fast, directory-based audio player written in Rust for L
 - ⌨️ **100% Keyboard Driven**: Full keyboard shortcuts for playback, search, file operations, and navigation.
 - 🔍 **Easy Finder (`/` or `F3`)**: Instant search and filter overlay across loaded directories.
 - ✏️ **Batch File Replacer (`F2`)**: Multiple file filename replacer directly inside your playlist.
+- 🖼️ **Album Art Background (`F9`)**: Displays subtle watermark album art extracted from ID3 tags or folder cover files (`cover.jpg`/`folder.png`).
 - 📁 **Parent Folder View Toggle (`F8`)**: Easily display parent subfolder names alongside track filenames.
 
 ---
@@ -71,10 +72,16 @@ cargo build --release
 
 | Shortcut | Action |
 | :--- | :--- |
+| `Left / Right` | Skip back / forward 5 seconds (hold to seek) |
+| `Up / Down` | Navigate track focus in playlist |
+| `Ctrl + Left / Right` | Play previous / next track |
+| `Ctrl + Up / Down` | Raise / lower volume in 5% increments |
+| `End` | Stop audio playback |
 | `F1` | Toggle keyboard shortcuts guide |
 | `F4` | Open directory selection dialog |
 | `F5` | Refresh current directory for new/removed files |
 | `F8` | Toggle parent subfolder view mode |
+| `F9` | Toggle album art watermark background |
 | `F2` | Rename single track or launch batch file replacer |
 | `Del` | Remove selected track(s) from playlist |
 | `Ctrl + Del` | Crop playlist to selected items |

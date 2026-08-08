@@ -23,6 +23,8 @@ pub struct BobbyApp {
     single_rename_idx: Option<usize>,
 
     scrubbing_pos: Option<f32>,
+    album_art_texture: Option<egui::TextureHandle>,
+    loaded_art_path: Option<PathBuf>,
     status_msg: String,
 }
 
@@ -44,6 +46,8 @@ impl BobbyApp {
             single_rename_text: String::new(),
             single_rename_idx: None,
             scrubbing_pos: None,
+            album_art_texture: None,
+            loaded_art_path: None,
             status_msg: "Ready".to_string(),
         };
 
@@ -205,6 +209,17 @@ impl BobbyApp {
                 let status = if self.config.show_parent_folders { "ON" } else { "OFF" };
                 self.set_status(&format!("Parent folder view: {}", status));
             }
+            // F9: Toggle Album Art Background
+            if i.key_pressed(Key::F9) {
+                self.config.show_album_art_bg = !self.config.show_album_art_bg;
+                self.config.save();
+                let status = if self.config.show_album_art_bg {
+                    "Album Art Background: ON"
+                } else {
+                    "Album Art Background: OFF"
+                };
+                self.set_status(status);
+            }
             // F2: Rename single or multiple files
             if i.key_pressed(Key::F2) {
                 let selected = self.playlist.selected_indices();
@@ -293,6 +308,51 @@ impl BobbyApp {
             if i.key_pressed(Key::Home) {
                 self.set_status("Jumped to top");
             }
+            // End Key: Stop playback
+            if i.key_pressed(Key::End) {
+                self.audio.stop();
+                self.set_status("Playback Stopped");
+            }
+            // Arrow Keys: Left/Right = Skip 5s (Ctrl = Prev/Next Track), Up/Down = Move Focus (Ctrl = Vol ±5%)
+            if i.modifiers.ctrl {
+                if i.key_pressed(Key::ArrowLeft) {
+                    self.prev_track();
+                }
+                if i.key_pressed(Key::ArrowRight) {
+                    self.next_track();
+                }
+                if i.key_pressed(Key::ArrowUp) {
+                    let new_vol = (self.config.volume + 0.05).clamp(0.0, 1.0);
+                    self.config.volume = new_vol;
+                    self.audio.set_volume(new_vol);
+                    self.config.save();
+                    self.set_status(&format!("Volume: {:.0}%", new_vol * 100.0));
+                }
+                if i.key_pressed(Key::ArrowDown) {
+                    let new_vol = (self.config.volume - 0.05).clamp(0.0, 1.0);
+                    self.config.volume = new_vol;
+                    self.audio.set_volume(new_vol);
+                    self.config.save();
+                    self.set_status(&format!("Volume: {:.0}%", new_vol * 100.0));
+                }
+            } else {
+                if i.key_pressed(Key::ArrowLeft) {
+                    let cur_pos = self.audio.get_pos();
+                    let new_pos = cur_pos.saturating_sub(std::time::Duration::from_secs(5));
+                    self.audio.seek_to(new_pos);
+                }
+                if i.key_pressed(Key::ArrowRight) {
+                    let cur_pos = self.audio.get_pos();
+                    let new_pos = cur_pos + std::time::Duration::from_secs(5);
+                    self.audio.seek_to(new_pos);
+                }
+                if i.key_pressed(Key::ArrowUp) {
+                    self.playlist.select_prev();
+                }
+                if i.key_pressed(Key::ArrowDown) {
+                    self.playlist.select_next();
+                }
+            }
             // Slash or F3: Easy Finder
             if i.key_pressed(Key::Slash) || i.key_pressed(Key::F3) {
                 self.show_easy_finder = true;
@@ -304,6 +364,16 @@ impl BobbyApp {
 
 impl eframe::App for BobbyApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        let current_track_path = self.playlist.current_track().map(|t| t.path.clone());
+        if current_track_path != self.loaded_art_path {
+            self.loaded_art_path = current_track_path.clone();
+            if let Some(ref path) = current_track_path {
+                self.album_art_texture = load_album_art_texture(ctx, path);
+            } else {
+                self.album_art_texture = None;
+            }
+        }
+
         // Continuous repaint loop while playing for smooth 14-LED meter animation
         if self.audio.is_playing() {
             ctx.request_repaint();
@@ -571,6 +641,33 @@ impl eframe::App for BobbyApp {
             let visible_indices = self.playlist.visible_indices();
             let show_parent = self.config.show_parent_folders;
 
+            // Optional Album Art Background Watermark (F9 toggle)
+            if self.config.show_album_art_bg {
+                if let Some(ref texture) = self.album_art_texture {
+                    let panel_rect = ui.max_rect();
+                    let tex_size = texture.size_vec2();
+                    if tex_size.x > 0.0 && tex_size.y > 0.0 {
+                        let aspect = tex_size.x / tex_size.y;
+                        let panel_aspect = panel_rect.width() / panel_rect.height();
+
+                        let draw_size = if aspect > panel_aspect {
+                            Vec2::new(panel_rect.width(), panel_rect.width() / aspect)
+                        } else {
+                            Vec2::new(panel_rect.height() * aspect, panel_rect.height())
+                        };
+
+                        let draw_rect = Rect::from_center_size(panel_rect.center(), draw_size);
+
+                        ui.painter().image(
+                            texture.id(),
+                            draw_rect,
+                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                            Color32::from_white_alpha(45),
+                        );
+                    }
+                }
+            }
+
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(ui, 22.0, visible_indices.len(), |ui, row_range| {
@@ -598,13 +695,13 @@ impl eframe::App for BobbyApp {
 
                             if ui.is_rect_visible(rect) {
                                 let bg_color = if is_selected {
-                                    Color32::from_rgb(35, 55, 85)
+                                    Color32::from_rgba_unmultiplied(35, 55, 85, 230)
                                 } else if is_current {
-                                    Color32::from_rgb(25, 45, 70)
+                                    Color32::from_rgba_unmultiplied(25, 45, 70, 220)
                                 } else if response.hovered() {
-                                    Color32::from_rgb(32, 40, 52)
+                                    Color32::from_rgba_unmultiplied(32, 40, 52, 220)
                                 } else if row_i % 2 == 1 {
-                                    Color32::from_rgb(24, 30, 39)
+                                    Color32::from_rgba_unmultiplied(24, 30, 39, 180)
                                 } else {
                                     Color32::TRANSPARENT
                                 };
@@ -732,10 +829,16 @@ impl eframe::App for BobbyApp {
                         ui.label(RichText::new("Action").strong());
                         ui.end_row();
 
+                        ui.label("Left / Right"); ui.label("Skip back / forward 5s (hold to seek)"); ui.end_row();
+                        ui.label("Up / Down"); ui.label("Navigate track focus in playlist"); ui.end_row();
+                        ui.label("Ctrl + Left / Right"); ui.label("Play previous / next track"); ui.end_row();
+                        ui.label("Ctrl + Up / Down"); ui.label("Raise / lower volume by 5%"); ui.end_row();
+                        ui.label("End"); ui.label("Stop audio playback"); ui.end_row();
                         ui.label("F1"); ui.label("Toggle keyboard shortcuts guide"); ui.end_row();
                         ui.label("F4"); ui.label("Open folder select dialog"); ui.end_row();
                         ui.label("F5"); ui.label("Refresh folder for new / removed files"); ui.end_row();
                         ui.label("F8"); ui.label("Toggle parent folder path view"); ui.end_row();
+                        ui.label("F9"); ui.label("Toggle album art watermark background"); ui.end_row();
                         ui.label("F2"); ui.label("Rename file or launch batch replacer"); ui.end_row();
                         ui.label("Del"); ui.label("Remove selected file(s) from playlist"); ui.end_row();
                         ui.label("Ctrl + Del"); ui.label("Crop playlist to selected tracks"); ui.end_row();
@@ -752,6 +855,46 @@ impl eframe::App for BobbyApp {
                 });
         }
     }
+}
+
+fn load_album_art_texture(ctx: &Context, track_path: &std::path::Path) -> Option<egui::TextureHandle> {
+    // 1. Try reading embedded ID3 picture tags
+    if let Ok(tag) = id3::Tag::read_from_path(track_path) {
+        for pic in tag.pictures() {
+            if let Ok(img) = image::load_from_memory(&pic.data) {
+                let rgba = img.to_rgba8();
+                let size = [img.width() as usize, img.height() as usize];
+                let pixels = rgba
+                    .pixels()
+                    .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
+                    .collect();
+                let color_image = egui::ColorImage { size, pixels };
+                return Some(ctx.load_texture("album_art", color_image, egui::TextureOptions::LINEAR));
+            }
+        }
+    }
+
+    // 2. Fallback: check parent directory for standard cover image files
+    if let Some(parent) = track_path.parent() {
+        let cover_names = ["cover.jpg", "cover.png", "folder.jpg", "folder.png", "album.jpg", "album.png"];
+        for name in cover_names {
+            let img_path = parent.join(name);
+            if img_path.is_file() {
+                if let Ok(img) = image::open(&img_path) {
+                    let rgba = img.to_rgba8();
+                    let size = [img.width() as usize, img.height() as usize];
+                    let pixels = rgba
+                        .pixels()
+                        .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
+                        .collect();
+                    let color_image = egui::ColorImage { size, pixels };
+                    return Some(ctx.load_texture("album_art", color_image, egui::TextureOptions::LINEAR));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn truncate_filename_middle(ui: &egui::Ui, prefix: &str, raw_name: &str, max_width_px: f32) -> String {

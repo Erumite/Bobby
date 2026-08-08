@@ -12,6 +12,7 @@ pub struct AppConfig {
     pub window_height: Option<f32>,
     pub window_x: Option<f32>,
     pub window_y: Option<f32>,
+    pub show_album_art_bg: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +36,7 @@ impl Default for AppConfig {
             window_height: Some(480.0),
             window_x: None,
             window_y: None,
+            show_album_art_bg: true,
         }
     }
 }
