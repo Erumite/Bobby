@@ -11,6 +11,7 @@ Bobby is a lightweight, fast, directory-based Linux audio player built with Rust
    export PKG_CONFIG_PATH="/home/linuxbrew/.linuxbrew/lib/pkgconfig:$PKG_CONFIG_PATH"
    ```
 3. **Atomic Installer**: Use `rtk ./install.sh` to compile release binary and update `~/.local/bin/bobby`.
+4. **Git & Release Management**: Do NOT automatically bump versions in `Cargo.toml` or execute git commits/tags/pushes unless explicitly requested by the user.
 
 ## Architecture & Codebase Map
 - `src/main.rs`: Entry point, window initialization, application icon loading, and restoring window geometry from config.
@@ -41,7 +42,7 @@ rtk ./install.sh
 - **Audio Stats**: `TrackAudioInfo::display_string()` formats container format, bitrate, and channels (e.g. `MP3 128 Kbps Stereo` or `WAV 1411 Kbps Mono`).
 
 ## Release Workflow & Version Bumping
-When asked to create a release:
+ONLY perform version bumping, git commits, tagging, and pushing when EXPLICITLY requested by the user:
 1. **Bump Version**: Update `version = "X.Y.Z"` in `Cargo.toml`.
 2. **Stage & Commit**:
    ```bash

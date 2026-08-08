@@ -84,8 +84,14 @@ impl AudioPlayer {
         let reader = BufReader::new(file);
         let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
         let channels = decoder.channels();
-        let total_dur = decoder.total_duration();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("AUD").to_uppercase();
+        let total_dur = decoder.total_duration().or_else(|| {
+            if ext == "MP3" {
+                mp3_duration::from_path(path).ok()
+            } else {
+                None
+            }
+        });
 
         let bitrate_kbps = if let Some(dur) = total_dur {
             let secs = dur.as_secs_f64();
@@ -172,6 +178,28 @@ impl AudioPlayer {
             if sink.try_seek(pos).is_ok() {
                 self.seek_offset = pos;
                 self.start_time = Some(Instant::now());
+                return;
+            }
+        }
+
+        if let Some(ref path_str) = self.playing_path.clone() {
+            let path = Path::new(path_str);
+            if let Ok(file) = File::open(path) {
+                let reader = BufReader::new(file);
+                if let Ok(decoder) = Decoder::new(reader) {
+                    if let Some(handle) = &self.stream_handle {
+                        if let Ok(sink) = Sink::try_new(handle) {
+                            sink.set_volume(self.effective_volume());
+                            let skipped = decoder.skip_duration(pos);
+                            sink.append(skipped);
+                            sink.play();
+                            self.sink = Some(sink);
+                            self.seek_offset = pos;
+                            self.start_time = Some(Instant::now());
+                            self.is_paused.store(false, Ordering::SeqCst);
+                        }
+                    }
+                }
             }
         }
     }
