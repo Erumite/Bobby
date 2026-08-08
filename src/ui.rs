@@ -899,8 +899,9 @@ fn load_album_art_texture(ctx: &Context, track_path: &std::path::Path) -> Option
     if let Ok(tag) = id3::Tag::read_from_path(track_path) {
         for pic in tag.pictures() {
             if let Ok(img) = image::load_from_memory(&pic.data) {
-                let rgba = img.to_rgba8();
-                let size = [img.width() as usize, img.height() as usize];
+                let thumb = img.thumbnail(512, 512);
+                let rgba = thumb.to_rgba8();
+                let size = [thumb.width() as usize, thumb.height() as usize];
                 let pixels = rgba
                     .pixels()
                     .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
@@ -918,8 +919,9 @@ fn load_album_art_texture(ctx: &Context, track_path: &std::path::Path) -> Option
             let img_path = parent.join(name);
             if img_path.is_file() {
                 if let Ok(img) = image::open(&img_path) {
-                    let rgba = img.to_rgba8();
-                    let size = [img.width() as usize, img.height() as usize];
+                    let thumb = img.thumbnail(512, 512);
+                    let rgba = thumb.to_rgba8();
+                    let size = [thumb.width() as usize, thumb.height() as usize];
                     let pixels = rgba
                         .pixels()
                         .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
