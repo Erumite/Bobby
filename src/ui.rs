@@ -25,6 +25,12 @@ pub struct BobbyApp {
     scrubbing_pos: Option<f32>,
     album_art_texture: Option<egui::TextureHandle>,
     loaded_art_path: Option<PathBuf>,
+    cached_labels: Vec<String>,
+    last_truncate_avail_w: f32,
+    last_show_parent: bool,
+    last_playlist_len: usize,
+    last_current_idx: Option<usize>,
+    last_is_playing: bool,
     status_msg: String,
 }
 
@@ -48,6 +54,12 @@ impl BobbyApp {
             scrubbing_pos: None,
             album_art_texture: None,
             loaded_art_path: None,
+            cached_labels: Vec::new(),
+            last_truncate_avail_w: 0.0,
+            last_show_parent: false,
+            last_playlist_len: 0,
+            last_current_idx: None,
+            last_is_playing: false,
             status_msg: "Ready".to_string(),
         };
 
@@ -364,19 +376,19 @@ impl BobbyApp {
 
 impl eframe::App for BobbyApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let current_track_path = self.playlist.current_track().map(|t| t.path.clone());
-        if current_track_path != self.loaded_art_path {
-            self.loaded_art_path = current_track_path.clone();
-            if let Some(ref path) = current_track_path {
+        let current_track_path = self.playlist.current_track().map(|t| &t.path);
+        if current_track_path != self.loaded_art_path.as_ref() {
+            self.loaded_art_path = current_track_path.cloned();
+            if let Some(path) = current_track_path {
                 self.album_art_texture = load_album_art_texture(ctx, path);
             } else {
                 self.album_art_texture = None;
             }
         }
 
-        // Continuous repaint loop while playing for smooth 14-LED meter animation
+        // Capped 30 FPS repaint loop during playback to keep CPU usage < 1%
         if self.audio.is_playing() {
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
 
         // Auto gapless track progression
@@ -668,11 +680,40 @@ impl eframe::App for BobbyApp {
                 }
             }
 
+            let avail_w = ui.available_width();
+            let is_playing = self.audio.is_playing();
+            let curr_idx = self.playlist.current_index;
+            let playlist_len = visible_indices.len();
+
+            let width_changed = (avail_w - self.last_truncate_avail_w).abs() > 1.0;
+            let parent_changed = show_parent != self.last_show_parent;
+            let len_changed = playlist_len != self.last_playlist_len;
+            let idx_changed = curr_idx != self.last_current_idx;
+            let playing_changed = is_playing != self.last_is_playing;
+
+            if width_changed || parent_changed || len_changed || idx_changed || playing_changed || self.cached_labels.len() != playlist_len {
+                self.last_truncate_avail_w = avail_w;
+                self.last_show_parent = show_parent;
+                self.last_playlist_len = playlist_len;
+                self.last_current_idx = curr_idx;
+                self.last_is_playing = is_playing;
+                self.cached_labels.clear();
+
+                for &track_idx in &visible_indices {
+                    if let Some(track) = self.playlist.tracks.get(track_idx) {
+                        let is_current = curr_idx == Some(track_idx);
+                        let icon = if is_current && is_playing { "▶ " } else { "   " };
+                        let prefix_str = format!("{}{:03}. ", icon, track_idx + 1);
+                        let raw_name = track.display_name(show_parent);
+                        let label_text = truncate_filename_middle(ui, &prefix_str, &raw_name, avail_w - 12.0);
+                        self.cached_labels.push(label_text);
+                    }
+                }
+            }
+
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(ui, 22.0, visible_indices.len(), |ui, row_range| {
-                    let avail_w = ui.available_width();
-
                     for row_i in row_range {
                         if let Some(&track_idx) = visible_indices.get(row_i) {
                             let is_current = self.playlist.current_index == Some(track_idx);
@@ -685,11 +726,7 @@ impl eframe::App for BobbyApp {
                                 Color32::from_rgb(220, 230, 240)
                             };
 
-                            let icon = if is_current && self.audio.is_playing() { "▶ " } else { "   " };
-                            let prefix_str = format!("{}{:03}. ", icon, track_idx + 1);
-
-                            let raw_name = track.display_name(show_parent);
-                            let label_text = truncate_filename_middle(ui, &prefix_str, &raw_name, avail_w - 12.0);
+                            let label_text = self.cached_labels.get(row_i).map(|s| s.as_str()).unwrap_or(&track.filename);
 
                             let (rect, response) = ui.allocate_exact_size(Vec2::new(avail_w, 22.0), Sense::click());
 
@@ -906,38 +943,33 @@ fn truncate_filename_middle(ui: &egui::Ui, prefix: &str, raw_name: &str, max_wid
         return full_text;
     }
 
+    let char_count = full_text.chars().count();
+    if char_count == 0 {
+        return full_text;
+    }
+
+    let char_w = (full_w / char_count as f32).max(1.0);
+    let max_chars = (max_width_px / char_w) as usize;
+
+    let prefix_chars = prefix.chars().count();
     let (stem, ext) = if let Some(dot_idx) = raw_name.rfind('.') {
         (&raw_name[..dot_idx], &raw_name[dot_idx..])
     } else {
         (raw_name, "")
     };
 
+    let ext_chars = ext.chars().count();
+    let avail_stem_chars = max_chars.saturating_sub(prefix_chars + 3 + ext_chars);
+
     let stem_chars: Vec<char> = stem.chars().collect();
-    if stem_chars.is_empty() {
-        return format!("{}...{}", prefix, ext);
+    if stem_chars.len() <= avail_stem_chars || avail_stem_chars == 0 {
+        let fit_len = avail_stem_chars.min(stem_chars.len());
+        let stem_prefix: String = stem_chars[..fit_len].iter().collect();
+        format!("{}{}...{}", prefix, stem_prefix, ext)
+    } else {
+        let stem_prefix: String = stem_chars[..avail_stem_chars].iter().collect();
+        format!("{}{}...{}", prefix, stem_prefix, ext)
     }
-
-    let mut low = 1;
-    let mut high = stem_chars.len();
-    let mut best = 1;
-
-    while low <= high {
-        let mid = (low + high) / 2;
-        let candidate_stem: String = stem_chars[..mid].iter().collect();
-        let candidate_text = format!("{}{}...{}", prefix, candidate_stem, ext);
-        let w = ui.fonts(|f| f.layout_no_wrap(candidate_text, font_id.clone(), Color32::WHITE).rect.width());
-
-        if w <= max_width_px {
-            best = mid;
-            low = mid + 1;
-        } else {
-            if mid == 0 { break; }
-            high = mid - 1;
-        }
-    }
-
-    let stem_prefix: String = stem_chars[..best].iter().collect();
-    format!("{}{}...{}", prefix, stem_prefix, ext)
 }
 
 fn format_duration_str(dur: std::time::Duration) -> String {
