@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "bobby"
-version = "1.0.2"
+version = "1.0.4"
 dependencies = [
  "eframe",
  "egui",
