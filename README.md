@@ -2,7 +2,7 @@
 
 ![icon](assets/bobby.png)
 
-Bobby is a lightweight, fast, directory-based audio player for Linux inspired by [Billy](https://github.com/zQueal/Billy).
+Bobby is a lightweight, fast, directory-based audio player written in Rust for Linux inspired by [Billy](https://github.com/zQueal/Billy).
 
 ---
 
@@ -10,11 +10,15 @@ Bobby is a lightweight, fast, directory-based audio player for Linux inspired by
 
 - ⚡ **Instant Directory Loading**: Loads thousands of songs in seconds without tag pre-scanning delays.
 - 🎵 **Format Support**: Plays MP3, FLAC, OGG Vorbis, WAV, M4A, AAC, and Opus natively.
+- ⏱️ **Interactive Seek Bar**: Real-time position tracking with smooth mouse-release scrubbing (`0:00` / `3:45`).
+- 📊 **Audio Track Stats**: Live container format, bitrate in Kbps, and channel configuration (`MP3 128 Kbps Stereo`, `WAV 1411 Kbps Mono`).
 - 🎛️ **Retro 14-LED Peak Level Meter**: Real-time dual-channel peak VU meters.
+- 📜 **Monospace Playlist & Zebra Striping**: Full-width extension-preserving middle filename truncation (`really_long_f...mp3`) with alternating row highlights.
+- 🖱️ **Mouse Wheel Volume Control**: Hover over volume controls and scroll mouse wheel up/down to adjust volume in 1% steps.
+- 💾 **Persistent Settings & Window Geometry**: Automatically remembers volume, playmode, last folder, and window size/position in `~/.config/bobby/bobby_config.json`.
 - ⌨️ **100% Keyboard Driven**: Full keyboard shortcuts for playback, search, file operations, and navigation.
 - 🔍 **Easy Finder (`/` or `F3`)**: Instant search and filter overlay across loaded directories.
 - ✏️ **Batch File Replacer (`F2`)**: Multiple file filename replacer directly inside your playlist.
-- 🔊 **Quick Volume Attenuation (`V`)**: Instantly drop volume by 30% for incoming calls.
 - 📁 **Parent Folder View Toggle (`F8`)**: Easily display parent subfolder names alongside track filenames.
 
 ---
@@ -50,7 +54,7 @@ Bobby is a lightweight, fast, directory-based audio player for Linux inspired by
 - `alsa-lib` development headers (e.g. `brew install alsa-lib` or `sudo apt install libasound2-dev pkg-config`)
 
 #### Build & Install
-Run the automated installer script:
+Run the automated installer script (can be run from any directory):
 ```bash
 chmod +x install.sh
 ./install.sh
@@ -83,6 +87,6 @@ cargo build --release
 
 ---
 
-Simple UI Preview:
+## Simple UI Preview:
 
 ![UIPreview](assets/ui.webp)
