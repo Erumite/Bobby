@@ -39,3 +39,19 @@ rtk ./install.sh
 - **Playlist Truncation**: Monospace font (`FontId::monospace(13.0)`). `truncate_filename_middle` uses binary search on exact font pixel width to keep file stem prefix, `...`, and extension (`stem...ext`).
 - **Full-Width Rows**: Rows use `allocate_exact_size` with `Align2::LEFT_CENTER` text anchoring for 100% left-aligned track titles and full-width zebra striping (`Color32::from_rgb(24, 30, 39)`).
 - **Audio Stats**: `TrackAudioInfo::display_string()` formats container format, bitrate, and channels (e.g. `MP3 128 Kbps Stereo` or `WAV 1411 Kbps Mono`).
+
+## Release Workflow & Version Bumping
+When asked to create a release:
+1. **Bump Version**: Update `version = "X.Y.Z"` in `Cargo.toml`.
+2. **Stage & Commit**:
+   ```bash
+   rtk git add .
+   rtk git commit -m "Release vX.Y.Z: <summary of features/fixes>"
+   ```
+3. **Push Branch & Tag**:
+   ```bash
+   rtk git push origin main
+   rtk git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   rtk git push origin vX.Y.Z
+   ```
+4. **CI/CD Build**: Pushing tag `vX.Y.Z` automatically triggers GitHub Actions (`.github/workflows/release.yml`) to compile release binaries and publish artifacts to GitHub Releases.
