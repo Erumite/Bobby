@@ -372,9 +372,71 @@ impl eframe::App for BobbyApp {
 
                 ui.heading(RichText::new("Bobby").strong().color(Color32::from_rgb(80, 190, 250)));
 
+                // Right-to-left: [LED VU Meter] [Vol Text] [Slider] [Mute Icon] | [Separator]
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (l, r) = self.audio.get_levels();
                     self.render_led_meter(ui, l, r);
+
+                    ui.add_space(4.0);
+
+                    // Volume text directly adjacent to VU meter
+                    let vol_str = format!("{:.0}%", self.config.volume * 100.0);
+                    let text_res = ui.add_sized(
+                        Vec2::new(32.0, 18.0),
+                        egui::Label::new(RichText::new(vol_str).small().monospace())
+                    );
+
+                    // Compact volume slider
+                    let slider_res = ui.scope(|ui| {
+                        ui.spacing_mut().slider_width = 55.0;
+                        let mut vol = self.config.volume;
+                        let res = ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false));
+                        if res.changed() {
+                            self.config.volume = vol;
+                            self.audio.set_volume(vol);
+                            self.config.save();
+                        }
+                        res
+                    }).inner;
+
+                    // Mute icon button
+                    let vol_icon = if self.audio.is_muted() || self.config.volume == 0.0 {
+                        "🔇"
+                    } else if self.config.volume < 0.3 {
+                        "🔉"
+                    } else {
+                        "🔊"
+                    };
+
+                    let mute_tooltip = if self.audio.is_muted() { "Unmute (M)" } else { "Mute (M)" };
+                    let mute_res = ui.button(vol_icon).on_hover_text(mute_tooltip);
+                    if mute_res.clicked() {
+                        let muted = self.audio.toggle_mute();
+                        let status = if muted {
+                            "Audio Muted".to_string()
+                        } else {
+                            format!("Audio Unmuted ({:.0}%)", self.config.volume * 100.0)
+                        };
+                        self.set_status(&status);
+                    }
+
+                    // Mouse wheel scrolling over volume controls increments/decrements volume by 1%
+                    if text_res.hovered() || slider_res.hovered() || mute_res.hovered() {
+                        let scroll_y = ui.input(|i| i.raw_scroll_delta.y);
+                        if scroll_y != 0.0 {
+                            let delta = if scroll_y > 0.0 { 0.01 } else { -0.01 };
+                            let new_vol = (self.config.volume + delta).clamp(0.0, 1.0);
+                            if (new_vol - self.config.volume).abs() > 0.0001 {
+                                self.config.volume = new_vol;
+                                self.audio.set_volume(new_vol);
+                                self.config.save();
+                                self.set_status(&format!("Volume: {:.0}%", new_vol * 100.0));
+                            }
+                        }
+                    }
+
+                    ui.add_space(4.0);
+                    ui.separator();
                 });
             });
 
@@ -382,7 +444,7 @@ impl eframe::App for BobbyApp {
             ui.separator();
             ui.add_space(4.0);
 
-            // Audio & Playback Toolbar
+            // Audio & Playback Toolbar with Seek Bar
             ui.horizontal(|ui| {
                 // Combined Play/Pause button
                 let (play_pause_symbol, play_pause_tooltip) = if self.audio.is_playing() {
@@ -439,42 +501,36 @@ impl eframe::App for BobbyApp {
 
                 ui.separator();
 
-                // Volume mute toggle button & slider dynamically stretching across remaining width
-                let vol_icon = if self.audio.is_muted() || self.config.volume == 0.0 {
-                    "🔇"
-                } else if self.config.volume < 0.3 {
-                    "🔉"
-                } else {
-                    "🔊"
-                };
+                // Seek Bar (Time elapsed on left, dynamic slider in middle, track duration on right)
+                let cur_pos = self.audio.get_pos();
+                let dur = self.audio.duration();
+                let total_secs = dur.map(|d| d.as_secs_f32()).unwrap_or(0.0);
+                let cur_secs = cur_pos.as_secs_f32().min(total_secs);
 
-                let mute_tooltip = if self.audio.is_muted() {
-                    "Unmute (M)"
-                } else {
-                    "Mute (M)"
-                };
+                let elapsed_str = format_duration_str(cur_pos);
+                let duration_str = dur.map(format_duration_str).unwrap_or_else(|| "--:--".to_string());
 
-                if ui.button(vol_icon).on_hover_text(mute_tooltip).clicked() {
-                    let muted = self.audio.toggle_mute();
-                    let status = if muted {
-                        "Audio Muted".to_string()
-                    } else {
-                        format!("Audio Unmuted ({:.0}%)", self.config.volume * 100.0)
-                    };
-                    self.set_status(&status);
+                ui.label(RichText::new(elapsed_str).small().monospace().color(Color32::from_rgb(180, 220, 250)));
+
+                if total_secs > 0.0 {
+                    ui.scope(|ui| {
+                        let avail_seek_w = (ui.available_width() - 55.0).max(40.0);
+                        ui.spacing_mut().slider_width = avail_seek_w;
+                        let mut seek_val = cur_secs;
+                        if ui.add(egui::Slider::new(&mut seek_val, 0.0..=total_secs).show_value(false)).changed() {
+                            self.audio.seek_to(std::time::Duration::from_secs_f32(seek_val));
+                        }
+                    });
+                } else {
+                    ui.scope(|ui| {
+                        let avail_seek_w = (ui.available_width() - 55.0).max(40.0);
+                        ui.spacing_mut().slider_width = avail_seek_w;
+                        let mut zero = 0.0;
+                        ui.add_enabled(false, egui::Slider::new(&mut zero, 0.0..=1.0).show_value(false));
+                    });
                 }
 
-                ui.scope(|ui| {
-                    let available_slider_w = (ui.available_width() - 48.0).max(40.0);
-                    ui.spacing_mut().slider_width = available_slider_w;
-                    let mut vol = self.config.volume;
-                    if ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false)).changed() {
-                        self.config.volume = vol;
-                        self.audio.set_volume(vol);
-                        self.config.save();
-                    }
-                });
-                ui.label(format!("{:.0}%", self.config.volume * 100.0));
+                ui.label(RichText::new(duration_str).small().monospace().color(Color32::GRAY));
             });
             ui.add_space(4.0);
         });
@@ -698,5 +754,12 @@ fn truncate_filename_middle(name: &str, max_chars: usize) -> String {
     let chars: Vec<char> = name.chars().collect();
     let prefix_len = max_chars.saturating_sub(3);
     format!("{}...", chars[..prefix_len].iter().collect::<String>())
+}
+
+fn format_duration_str(dur: std::time::Duration) -> String {
+    let secs = dur.as_secs();
+    let mins = secs / 60;
+    let remainder = secs % 60;
+    format!("{}:{:02}", mins, remainder)
 }
 

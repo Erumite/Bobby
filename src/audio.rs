@@ -1,10 +1,10 @@
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct AudioPlayer {
     _stream: Option<OutputStream>,
@@ -13,6 +13,8 @@ pub struct AudioPlayer {
     volume: f32,
     muted: bool,
     start_time: Option<Instant>,
+    seek_offset: Duration,
+    duration: Option<Duration>,
     playing_path: Option<String>,
     is_paused: Arc<AtomicBool>,
 }
@@ -34,6 +36,8 @@ impl AudioPlayer {
             volume: 1.0,
             muted: false,
             start_time: None,
+            seek_offset: Duration::ZERO,
+            duration: None,
             playing_path: None,
             is_paused: Arc::new(AtomicBool::new(false)),
         }
@@ -58,6 +62,7 @@ impl AudioPlayer {
         let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
         let reader = BufReader::new(file);
         let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
+        let total_dur = decoder.total_duration();
 
         let sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
         sink.set_volume(self.effective_volume());
@@ -65,6 +70,8 @@ impl AudioPlayer {
         sink.play();
 
         self.sink = Some(sink);
+        self.duration = total_dur;
+        self.seek_offset = Duration::ZERO;
         self.start_time = Some(Instant::now());
         self.playing_path = Some(path.to_string_lossy().to_string());
         self.is_paused.store(false, Ordering::SeqCst);
@@ -76,9 +83,14 @@ impl AudioPlayer {
         if let Some(sink) = &self.sink {
             if sink.is_paused() {
                 sink.play();
+                self.start_time = Some(Instant::now());
                 self.is_paused.store(false, Ordering::SeqCst);
             } else {
                 sink.pause();
+                if let Some(start) = self.start_time {
+                    self.seek_offset += start.elapsed();
+                }
+                self.start_time = None;
                 self.is_paused.store(true, Ordering::SeqCst);
             }
         }
@@ -88,9 +100,36 @@ impl AudioPlayer {
         if let Some(sink) = self.sink.take() {
             sink.stop();
         }
+        self.duration = None;
+        self.seek_offset = Duration::ZERO;
         self.start_time = None;
         self.playing_path = None;
         self.is_paused.store(false, Ordering::SeqCst);
+    }
+
+    pub fn duration(&self) -> Option<Duration> {
+        self.duration
+    }
+
+    pub fn get_pos(&self) -> Duration {
+        if let Some(start) = self.start_time {
+            if self.is_playing() {
+                self.seek_offset + start.elapsed()
+            } else {
+                self.seek_offset
+            }
+        } else {
+            self.seek_offset
+        }
+    }
+
+    pub fn seek_to(&mut self, pos: Duration) {
+        if let Some(sink) = &self.sink {
+            if sink.try_seek(pos).is_ok() {
+                self.seek_offset = pos;
+                self.start_time = Some(Instant::now());
+            }
+        }
     }
 
     pub fn set_volume(&mut self, volume: f32) {
