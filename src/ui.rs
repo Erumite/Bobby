@@ -554,15 +554,14 @@ impl eframe::App for BobbyApp {
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let track_count = self.playlist.tracks.len();
-                let current_info = if let Some(t) = self.playlist.current_track() {
-                    format!("Playing: {}", t.filename)
-                } else {
-                    "Stopped".to_string()
-                };
-
-                ui.label(RichText::new(format!("Tracks: {} | {}", track_count, current_info)).small());
+                ui.label(RichText::new(format!("Tracks: {}", track_count)).small());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(&self.status_msg).small().color(Color32::from_rgb(180, 220, 250)));
+                    let right_text = if let Some(info) = self.audio.track_info() {
+                        info.display_string()
+                    } else {
+                        self.status_msg.clone()
+                    };
+                    ui.label(RichText::new(right_text).small().color(Color32::from_rgb(180, 220, 250)));
                 });
             });
         });
@@ -576,23 +575,12 @@ impl eframe::App for BobbyApp {
                 .auto_shrink([false, false])
                 .show_rows(ui, 22.0, visible_indices.len(), |ui, row_range| {
                     let avail_w = ui.available_width();
-                    let max_line_chars = ((avail_w - 16.0) / 7.5).max(12.0) as usize;
 
                     for row_i in row_range {
                         if let Some(&track_idx) = visible_indices.get(row_i) {
                             let is_current = self.playlist.current_index == Some(track_idx);
                             let track = &mut self.playlist.tracks[track_idx];
                             let is_selected = track.selected;
-
-                            // Zebra striping background for odd rows
-                            let row_rect = Rect::from_min_size(
-                                ui.cursor().min,
-                                Vec2::new(avail_w, 22.0),
-                            );
-
-                            if row_i % 2 == 1 && !is_selected && !is_current {
-                                ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgb(24, 30, 39));
-                            }
 
                             let text_color = if is_current {
                                 Color32::from_rgb(100, 220, 255)
@@ -602,17 +590,38 @@ impl eframe::App for BobbyApp {
 
                             let icon = if is_current && self.audio.is_playing() { "▶ " } else { "   " };
                             let prefix_str = format!("{}{:03}. ", icon, track_idx + 1);
-                            let prefix_chars = prefix_str.chars().count();
-                            let name_max_chars = max_line_chars.saturating_sub(prefix_chars);
 
                             let raw_name = track.display_name(show_parent);
-                            let truncated_name = truncate_filename_middle(&raw_name, name_max_chars);
-                            let label_text = format!("{}{}", prefix_str, truncated_name);
+                            let label_text = truncate_filename_middle(ui, &prefix_str, &raw_name, avail_w - 12.0);
 
-                            let response = ui.selectable_label(
-                                is_selected || is_current,
-                                RichText::new(label_text).color(text_color),
-                            );
+                            let (rect, response) = ui.allocate_exact_size(Vec2::new(avail_w, 22.0), Sense::click());
+
+                            if ui.is_rect_visible(rect) {
+                                let bg_color = if is_selected {
+                                    Color32::from_rgb(35, 55, 85)
+                                } else if is_current {
+                                    Color32::from_rgb(25, 45, 70)
+                                } else if response.hovered() {
+                                    Color32::from_rgb(32, 40, 52)
+                                } else if row_i % 2 == 1 {
+                                    Color32::from_rgb(24, 30, 39)
+                                } else {
+                                    Color32::TRANSPARENT
+                                };
+
+                                if bg_color != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(rect, 0.0, bg_color);
+                                }
+
+                                let text_pos = Pos2::new(rect.min.x + 6.0, rect.center().y);
+                                ui.painter().text(
+                                    text_pos,
+                                    egui::Align2::LEFT_CENTER,
+                                    label_text,
+                                    egui::FontId::monospace(13.0),
+                                    text_color,
+                                );
+                            }
 
                             if response.double_clicked() {
                                 self.play_track_at(track_idx);
@@ -745,30 +754,47 @@ impl eframe::App for BobbyApp {
     }
 }
 
-fn truncate_filename_middle(name: &str, max_chars: usize) -> String {
-    let total_chars = name.chars().count();
-    if total_chars <= max_chars || max_chars < 8 {
-        return name.to_string();
+fn truncate_filename_middle(ui: &egui::Ui, prefix: &str, raw_name: &str, max_width_px: f32) -> String {
+    let font_id = egui::FontId::monospace(13.0);
+    let full_text = format!("{}{}", prefix, raw_name);
+
+    let full_w = ui.fonts(|f| f.layout_no_wrap(full_text.clone(), font_id.clone(), Color32::WHITE).rect.width());
+    if full_w <= max_width_px {
+        return full_text;
     }
 
-    if let Some(dot_idx) = name.rfind('.') {
-        let ext = &name[dot_idx..];
-        let stem = &name[..dot_idx];
-        let ext_chars_len = ext.chars().count();
+    let (stem, ext) = if let Some(dot_idx) = raw_name.rfind('.') {
+        (&raw_name[..dot_idx], &raw_name[dot_idx..])
+    } else {
+        (raw_name, "")
+    };
 
-        if ext_chars_len + 3 < max_chars {
-            let available_stem = max_chars - 3 - ext_chars_len;
-            let stem_chars: Vec<char> = stem.chars().collect();
-            if stem_chars.len() > available_stem {
-                let prefix: String = stem_chars[..available_stem].iter().collect();
-                return format!("{}...{}", prefix, ext);
-            }
+    let stem_chars: Vec<char> = stem.chars().collect();
+    if stem_chars.is_empty() {
+        return format!("{}...{}", prefix, ext);
+    }
+
+    let mut low = 1;
+    let mut high = stem_chars.len();
+    let mut best = 1;
+
+    while low <= high {
+        let mid = (low + high) / 2;
+        let candidate_stem: String = stem_chars[..mid].iter().collect();
+        let candidate_text = format!("{}{}...{}", prefix, candidate_stem, ext);
+        let w = ui.fonts(|f| f.layout_no_wrap(candidate_text, font_id.clone(), Color32::WHITE).rect.width());
+
+        if w <= max_width_px {
+            best = mid;
+            low = mid + 1;
+        } else {
+            if mid == 0 { break; }
+            high = mid - 1;
         }
     }
 
-    let chars: Vec<char> = name.chars().collect();
-    let prefix_len = max_chars.saturating_sub(3);
-    format!("{}...", chars[..prefix_len].iter().collect::<String>())
+    let stem_prefix: String = stem_chars[..best].iter().collect();
+    format!("{}{}...{}", prefix, stem_prefix, ext)
 }
 
 fn format_duration_str(dur: std::time::Duration) -> String {

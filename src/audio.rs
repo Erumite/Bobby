@@ -6,6 +6,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Clone)]
+pub struct TrackAudioInfo {
+    pub format: String,
+    pub bitrate_kbps: u32,
+    pub channels: u16,
+}
+
+impl TrackAudioInfo {
+    pub fn display_string(&self) -> String {
+        let ch_str = match self.channels {
+            1 => "Mono",
+            2 => "Stereo",
+            n => return format!("{} {} Kbps {}Ch", self.format, self.bitrate_kbps, n),
+        };
+        format!("{} {} Kbps {}", self.format, self.bitrate_kbps, ch_str)
+    }
+}
+
 pub struct AudioPlayer {
     _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
@@ -16,6 +34,7 @@ pub struct AudioPlayer {
     seek_offset: Duration,
     duration: Option<Duration>,
     playing_path: Option<String>,
+    track_info: Option<TrackAudioInfo>,
     is_paused: Arc<AtomicBool>,
 }
 
@@ -39,6 +58,7 @@ impl AudioPlayer {
             seek_offset: Duration::ZERO,
             duration: None,
             playing_path: None,
+            track_info: None,
             is_paused: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -60,9 +80,23 @@ impl AudioPlayer {
         };
 
         let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+        let file_size = file.metadata().ok().map(|m| m.len()).unwrap_or(0);
         let reader = BufReader::new(file);
         let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
+        let channels = decoder.channels();
         let total_dur = decoder.total_duration();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("AUD").to_uppercase();
+
+        let bitrate_kbps = if let Some(dur) = total_dur {
+            let secs = dur.as_secs_f64();
+            if secs > 0.0 && file_size > 0 {
+                ((file_size as f64 * 8.0) / secs / 1000.0).round() as u32
+            } else {
+                0
+            }
+        } else {
+            0
+        };
 
         let sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
         sink.set_volume(self.effective_volume());
@@ -74,6 +108,11 @@ impl AudioPlayer {
         self.seek_offset = Duration::ZERO;
         self.start_time = Some(Instant::now());
         self.playing_path = Some(path.to_string_lossy().to_string());
+        self.track_info = Some(TrackAudioInfo {
+            format: ext,
+            bitrate_kbps,
+            channels,
+        });
         self.is_paused.store(false, Ordering::SeqCst);
 
         Ok(())
@@ -104,7 +143,12 @@ impl AudioPlayer {
         self.seek_offset = Duration::ZERO;
         self.start_time = None;
         self.playing_path = None;
+        self.track_info = None;
         self.is_paused.store(false, Ordering::SeqCst);
+    }
+
+    pub fn track_info(&self) -> Option<&TrackAudioInfo> {
+        self.track_info.as_ref()
     }
 
     pub fn duration(&self) -> Option<Duration> {
