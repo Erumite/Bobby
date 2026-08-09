@@ -4,14 +4,8 @@
 Bobby is a lightweight, fast, directory-based Linux audio player built with Rust (`eframe`/`egui`, `rodio`).
 
 ## Critical Rules for Agents
-1. **Tool Commands**: Prefix all shell commands with `rtk` (e.g. `rtk cargo build`, `rtk git status`).
-2. **Environment Context**: Linux environment requiring Homebrew paths for compilation:
-   ```bash
-   export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
-   export PKG_CONFIG_PATH="/home/linuxbrew/.linuxbrew/lib/pkgconfig:$PKG_CONFIG_PATH"
-   ```
-3. **Atomic Installer**: Use `rtk ./install.sh` to compile release binary and update `~/.local/bin/bobby`.
-4. **Git & Release Management**: Do NOT automatically bump versions in `Cargo.toml` or execute git commits/tags/pushes unless explicitly requested by the user.
+1. **Atomic Installer**: Use `rtk ./install.sh` to compile release binary and update `~/.local/bin/bobby` locally.
+2. **Git & Release Management**: Do NOT bump versions in `Cargo.toml` or execute git commits/tags/pushes unless explicitly requested by the user.
 
 ## Architecture & Codebase Map
 - `src/main.rs`: Entry point, window initialization, application icon loading, and restoring window geometry from config.
@@ -33,13 +27,6 @@ rtk cargo run
 # Build release and install locally
 rtk ./install.sh
 ```
-
-## Key Technical Patterns
-- **Seek Scrubbing**: Live position tracked via `scrubbing_pos: Option<f32>`. Calls `audio.seek_to()` ONCE on `drag_stopped` or click to avoid audio buffer stutter.
-- **Volume Control**: Wrapped in fixed 36px width slot to prevent horizontal layout jitter. Mouse wheel scroll over volume controls increments/decrements volume in 1% steps (`±0.01`).
-- **Playlist Truncation**: Monospace font (`FontId::monospace(13.0)`). `truncate_filename_middle` uses binary search on exact font pixel width to keep file stem prefix, `...`, and extension (`stem...ext`).
-- **Full-Width Rows**: Rows use `allocate_exact_size` with `Align2::LEFT_CENTER` text anchoring for 100% left-aligned track titles and full-width zebra striping (`Color32::from_rgb(24, 30, 39)`).
-- **Audio Stats**: `TrackAudioInfo::display_string()` formats container format, bitrate, and channels (e.g. `MP3 128 Kbps Stereo` or `WAV 1411 Kbps Mono`).
 
 ## Release Workflow & Version Bumping
 ONLY perform version bumping, git commits, tagging, and pushing when EXPLICITLY requested by the user:
