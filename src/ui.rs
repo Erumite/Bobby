@@ -355,9 +355,15 @@ impl BobbyApp {
                 }
                 if i.key_pressed(Key::ArrowRight) {
                     let cur_pos = self.audio.get_pos();
-                    let new_pos = cur_pos + std::time::Duration::from_secs(5);
+                    let mut new_pos = cur_pos + std::time::Duration::from_secs(5);
+                    if let Some(dur) = self.audio.duration() {
+                        if new_pos > dur {
+                            new_pos = dur;
+                        }
+                    }
                     self.audio.seek_to(new_pos);
                 }
+
                 if i.key_pressed(Key::ArrowUp) {
                     self.playlist.select_prev();
                 }
