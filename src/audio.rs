@@ -99,37 +99,21 @@ impl AudioPlayer {
         let sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
         sink.set_volume(self.effective_volume());
 
+        let is_mp3 = ext == "MP3";
         let (channels, total_dur) = if let Ok(sym_decoder) = SymphoniaAudioDecoder::new(path) {
             let ch = sym_decoder.channels();
-            let dur = sym_decoder.total_duration().or_else(|| {
-                if ext == "MP3" {
-                    get_mp3_duration_robust(path)
-                } else {
-                    None
-                }
-            });
+            let dur = get_fallback_duration(sym_decoder.total_duration(), is_mp3, path);
             sink.append(sym_decoder);
             (ch, dur)
         } else {
             let reader = BufReader::new(file);
             let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
             let ch = decoder.channels();
-            let dur = decoder.total_duration().or_else(|| {
-                if ext == "MP3" {
-                    mp3_duration::from_path(path).ok()
-                        .or_else(|| {
-                            id3::Tag::read_from_path(path).ok()
-                                .and_then(|t| t.duration())
-                                .map(|ms| Duration::from_millis(ms as u64))
-                        })
-                        .or_else(|| get_mp3_duration_robust(path))
-                } else {
-                    None
-                }
-            });
+            let dur = get_fallback_duration(decoder.total_duration(), is_mp3, path);
             sink.append(decoder);
             (ch, dur)
         };
+
 
         let bitrate_kbps = if let Some(dur) = total_dur {
             let secs = dur.as_secs_f64();
@@ -600,7 +584,24 @@ impl Source for SymphoniaAudioDecoder {
 
 
 
+fn get_fallback_duration(decoder_dur: Option<Duration>, is_mp3: bool, path: &Path) -> Option<Duration> {
+    decoder_dur.or_else(|| {
+        if is_mp3 {
+            mp3_duration::from_path(path).ok()
+                .or_else(|| {
+                    id3::Tag::read_from_path(path).ok()
+                        .and_then(|t| t.duration())
+                        .map(|ms| Duration::from_millis(ms as u64))
+                })
+                .or_else(|| get_mp3_duration_robust(path))
+        } else {
+            None
+        }
+    })
+}
+
 fn get_mp3_duration_robust(path: &Path) -> Option<Duration> {
+
     let file = File::open(path).ok()?;
     let file_len = file.metadata().ok()?.len();
     if file_len == 0 {

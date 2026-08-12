@@ -316,10 +316,18 @@ impl BobbyApp {
                     }
                 }
             }
-            // Home / Tilde: Jump to top
+            // Home: Jump to top track in playlist
             if i.key_pressed(Key::Home) {
-                self.set_status("Jumped to top");
+                let visible = self.playlist.visible_indices();
+                if let Some(&first) = visible.first() {
+                    self.playlist.select_all(false);
+                    if let Some(t) = self.playlist.tracks.get_mut(first) {
+                        t.selected = true;
+                    }
+                    self.set_status("Jumped to top track");
+                }
             }
+
             // End Key: Stop playback
             if i.key_pressed(Key::End) {
                 self.audio.stop();
@@ -900,20 +908,24 @@ impl eframe::App for BobbyApp {
     }
 }
 
+fn image_to_texture(ctx: &Context, img: &image::DynamicImage) -> egui::TextureHandle {
+    let thumb = img.thumbnail(512, 512);
+    let rgba = thumb.to_rgba8();
+    let size = [thumb.width() as usize, thumb.height() as usize];
+    let pixels = rgba
+        .pixels()
+        .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
+        .collect();
+    let color_image = egui::ColorImage { size, pixels };
+    ctx.load_texture("album_art", color_image, egui::TextureOptions::LINEAR)
+}
+
 fn load_album_art_texture(ctx: &Context, track_path: &std::path::Path) -> Option<egui::TextureHandle> {
     // 1. Try reading embedded ID3 picture tags
     if let Ok(tag) = id3::Tag::read_from_path(track_path) {
         for pic in tag.pictures() {
             if let Ok(img) = image::load_from_memory(&pic.data) {
-                let thumb = img.thumbnail(512, 512);
-                let rgba = thumb.to_rgba8();
-                let size = [thumb.width() as usize, thumb.height() as usize];
-                let pixels = rgba
-                    .pixels()
-                    .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-                    .collect();
-                let color_image = egui::ColorImage { size, pixels };
-                return Some(ctx.load_texture("album_art", color_image, egui::TextureOptions::LINEAR));
+                return Some(image_to_texture(ctx, &img));
             }
         }
     }
@@ -925,15 +937,7 @@ fn load_album_art_texture(ctx: &Context, track_path: &std::path::Path) -> Option
             let img_path = parent.join(name);
             if img_path.is_file() {
                 if let Ok(img) = image::open(&img_path) {
-                    let thumb = img.thumbnail(512, 512);
-                    let rgba = thumb.to_rgba8();
-                    let size = [thumb.width() as usize, thumb.height() as usize];
-                    let pixels = rgba
-                        .pixels()
-                        .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-                        .collect();
-                    let color_image = egui::ColorImage { size, pixels };
-                    return Some(ctx.load_texture("album_art", color_image, egui::TextureOptions::LINEAR));
+                    return Some(image_to_texture(ctx, &img));
                 }
             }
         }
@@ -941,6 +945,7 @@ fn load_album_art_texture(ctx: &Context, track_path: &std::path::Path) -> Option
 
     None
 }
+
 
 fn truncate_filename_middle(ui: &egui::Ui, prefix: &str, raw_name: &str, max_width_px: f32) -> String {
     let font_id = egui::FontId::monospace(13.0);
