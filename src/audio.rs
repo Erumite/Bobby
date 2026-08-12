@@ -1,11 +1,13 @@
 use id3::TagLike;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{Decoder as SymphoniaDecoderTrait, DecoderOptions, CODEC_TYPE_NULL};
@@ -328,11 +330,13 @@ pub struct SymphoniaAudioDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn SymphoniaDecoderTrait>,
     track_id: u32,
-    sample_rate: u32,
+    original_sample_rate: u32,
+    target_sample_rate: u32,
     channels: u16,
     total_duration: Option<Duration>,
-    sample_buf: Option<SampleBuffer<i16>>,
-    sample_pos: usize,
+    output_queue: VecDeque<f32>,
+    resample_phase: f64,
+    prev_frames: Vec<Vec<f32>>,
 }
 
 impl SymphoniaAudioDecoder {
@@ -383,11 +387,13 @@ impl SymphoniaAudioDecoder {
             format: probed.format,
             decoder,
             track_id,
-            sample_rate,
+            original_sample_rate: sample_rate,
+            target_sample_rate: if sample_rate < 44100 { 44100 } else { sample_rate },
             channels,
             total_duration,
-            sample_buf: None,
-            sample_pos: 0,
+            output_queue: VecDeque::new(),
+            resample_phase: 0.0,
+            prev_frames: Vec::new(),
         };
 
         decoder_struct.prime_first_packet();
@@ -396,7 +402,12 @@ impl SymphoniaAudioDecoder {
     }
 
     fn prime_first_packet(&mut self) {
-        while let Ok(packet) = self.format.next_packet() {
+        while self.output_queue.len() < 8192 {
+            let packet = match self.format.next_packet() {
+                Ok(packet) => packet,
+                Err(_) => break,
+            };
+
             if packet.track_id() != self.track_id {
                 continue;
             }
@@ -404,54 +415,142 @@ impl SymphoniaAudioDecoder {
             if let Ok(audio_buf) = self.decoder.decode(&packet) {
                 let spec = *audio_buf.spec();
                 self.channels = spec.channels.count() as u16;
-                self.sample_rate = spec.rate;
-                let mut sample_buf = SampleBuffer::<i16>::new(audio_buf.capacity() as u64, spec);
-                sample_buf.copy_interleaved_ref(audio_buf);
-                self.sample_pos = 0;
-                self.sample_buf = Some(sample_buf);
-                break;
+                self.original_sample_rate = spec.rate;
+                self.target_sample_rate = if spec.rate < 44100 { 44100 } else { spec.rate };
+                resample_audio_buffer(
+                    &audio_buf,
+                    self.original_sample_rate,
+                    self.target_sample_rate,
+                    &mut self.output_queue,
+                    &mut self.resample_phase,
+                    &mut self.prev_frames,
+                );
             }
         }
     }
 }
 
+#[inline]
+fn cubic_hermite(y0: f32, y1: f32, y2: f32, y3: f32, t: f32) -> f32 {
+    let c0 = y1;
+    let c1 = 0.5 * (y2 - y0);
+    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    ((c3 * t + c2) * t + c1) * t + c0
+}
+
+fn resample_audio_buffer(
+    audio_buf: &symphonia::core::audio::AudioBufferRef,
+    original_sample_rate: u32,
+    target_sample_rate: u32,
+    output_queue: &mut VecDeque<f32>,
+    resample_phase: &mut f64,
+    prev_frames: &mut Vec<Vec<f32>>,
+) {
+    let spec = *audio_buf.spec();
+    let channels = spec.channels.count();
+    let num_frames = audio_buf.frames();
+    if num_frames == 0 || channels == 0 {
+        return;
+    }
+
+    let mut raw_buf = SampleBuffer::<f32>::new(num_frames as u64, spec);
+    raw_buf.copy_interleaved_ref(audio_buf.clone());
+    let samples = raw_buf.samples();
+
+    if original_sample_rate == target_sample_rate {
+        output_queue.extend(samples.iter().map(|&s| s.clamp(-1.0, 1.0)));
+        return;
+    }
+
+    let step = original_sample_rate as f64 / target_sample_rate as f64;
+
+    let get_frame_channel = |frame_idx: isize, ch: usize| -> f32 {
+        if frame_idx < 0 {
+            let offset = (prev_frames.len() as isize) + frame_idx;
+            if offset >= 0 && (offset as usize) < prev_frames.len() {
+                prev_frames[offset as usize].get(ch).copied().unwrap_or(0.0)
+            } else if !prev_frames.is_empty() {
+                prev_frames[0].get(ch).copied().unwrap_or(0.0)
+            } else {
+                samples.get(ch).copied().unwrap_or(0.0)
+            }
+        } else {
+            let idx = frame_idx as usize;
+            if idx < num_frames {
+                samples.get(idx * channels + ch).copied().unwrap_or(0.0)
+            } else {
+                samples.get((num_frames - 1) * channels + ch).copied().unwrap_or(0.0)
+            }
+        }
+    };
+
+    while *resample_phase < num_frames as f64 {
+        let i1 = resample_phase.floor() as isize;
+        let frac = (*resample_phase - i1 as f64) as f32;
+        let i0 = i1 - 1;
+        let i2 = i1 + 1;
+        let i3 = i1 + 2;
+
+        for c in 0..channels {
+            let y0 = get_frame_channel(i0, c);
+            let y1 = get_frame_channel(i1, c);
+            let y2 = get_frame_channel(i2, c);
+            let y3 = get_frame_channel(i3, c);
+            let interpolated = cubic_hermite(y0, y1, y2, y3, frac).clamp(-1.0, 1.0);
+            output_queue.push_back(interpolated);
+        }
+
+        *resample_phase += step;
+    }
+
+    *resample_phase -= num_frames as f64;
+    prev_frames.clear();
+    if num_frames >= 2 {
+        let f1 = (num_frames - 2) * channels;
+        let f2 = (num_frames - 1) * channels;
+        prev_frames.push(samples[f1..f1 + channels].to_vec());
+        prev_frames.push(samples[f2..f2 + channels].to_vec());
+    } else if num_frames == 1 {
+        let f1 = 0;
+        prev_frames.push(samples[f1..f1 + channels].to_vec());
+        prev_frames.push(samples[f1..f1 + channels].to_vec());
+    }
+}
+
 impl Iterator for SymphoniaAudioDecoder {
-    type Item = i16;
+    type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(ref buf) = self.sample_buf {
-                if self.sample_pos < buf.samples().len() {
-                    let sample = buf.samples()[self.sample_pos];
-                    self.sample_pos += 1;
-                    return Some(sample);
-                }
-            }
-
+        while self.output_queue.len() < 8192 {
             let packet = match self.format.next_packet() {
                 Ok(packet) => packet,
-                Err(_) => return None,
+                Err(_) => break,
             };
 
             if packet.track_id() != self.track_id {
                 continue;
             }
 
-            match self.decoder.decode(&packet) {
-                Ok(audio_buf) => {
-                    let spec = *audio_buf.spec();
-                    self.channels = spec.channels.count() as u16;
-                    self.sample_rate = spec.rate;
-                    let mut sample_buf = SampleBuffer::<i16>::new(audio_buf.capacity() as u64, spec);
-                    sample_buf.copy_interleaved_ref(audio_buf);
-                    self.sample_pos = 0;
-                    self.sample_buf = Some(sample_buf);
-                }
-                Err(_) => continue,
+            if let Ok(audio_buf) = self.decoder.decode(&packet) {
+                resample_audio_buffer(
+                    &audio_buf,
+                    self.original_sample_rate,
+                    self.target_sample_rate,
+                    &mut self.output_queue,
+                    &mut self.resample_phase,
+                    &mut self.prev_frames,
+                );
             }
         }
+
+        self.output_queue.pop_front()
     }
 }
+
+
+
+
 
 impl Source for SymphoniaAudioDecoder {
     fn current_frame_len(&self) -> Option<usize> {
@@ -463,7 +562,7 @@ impl Source for SymphoniaAudioDecoder {
     }
 
     fn sample_rate(&self) -> u32 {
-        self.sample_rate
+        self.target_sample_rate
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -484,9 +583,11 @@ impl Source for SymphoniaAudioDecoder {
             .is_ok()
         {
             self.decoder.reset();
-            self.sample_buf = None;
-            self.sample_pos = 0;
+            self.output_queue.clear();
+            self.resample_phase = 0.0;
+            self.prev_frames.clear();
             self.prime_first_packet();
+
             Ok(())
         } else {
             Err(rodio::source::SeekError::NotSupported {
@@ -495,6 +596,8 @@ impl Source for SymphoniaAudioDecoder {
         }
     }
 }
+
+
 
 
 fn get_mp3_duration_robust(path: &Path) -> Option<Duration> {
@@ -603,14 +706,19 @@ mod tests {
 
     #[test]
     fn test_m4b_decoding() {
-        let path = PathBuf::from("/var/mnt/THRASHER/bookdrop/Xanth/A Spell For Chameleon.m4b");
+        let path = PathBuf::from("/var/mnt/THRASHER/bookdrop/Xanth/11-Heaven Cent.m4b");
         if !path.exists() { return; }
-        let decoder = SymphoniaAudioDecoder::new(&path).unwrap();
-        println!("Primed reported channels: {}, sample_rate: {}", decoder.channels(), decoder.sample_rate());
-        assert_eq!(decoder.channels(), 1);
+        let mut decoder = SymphoniaAudioDecoder::new(&path).unwrap();
+        println!("Primed reported channels: {}, target_sample_rate: {}, original: {}", decoder.channels(), decoder.sample_rate(), decoder.original_sample_rate);
+        assert_eq!(decoder.original_sample_rate, 11025);
         assert_eq!(decoder.sample_rate(), 44100);
+
+        let resampled_samples: Vec<f32> = decoder.by_ref().take(44100).collect();
+        println!("Resampled 1 second of audio (44100 samples)! Count: {}", resampled_samples.len());
+        assert_eq!(resampled_samples.len(), 44100);
     }
 }
+
 
 
 
