@@ -10,7 +10,7 @@ env:
 
 jobs:
   publish-release:
-    name: Build & Publish Release
+    name: Build, Test & Publish Release
     runs-on: ubuntu-latest
 
     permissions:
@@ -30,6 +30,12 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting & syntax
+        run: cargo check --verbose
+
+      - name: Run unit tests
+        run: cargo test --verbose
 
       - name: Build release binary
         run: cargo build --release
