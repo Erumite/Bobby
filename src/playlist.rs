@@ -62,7 +62,7 @@ impl Playlist {
         self.tracks.clear();
         self.current_index = None;
 
-        let valid_extensions = ["mp3", "flac", "ogg", "wav", "m4a", "aac", "opus"];
+        let valid_extensions = ["mp3", "flac", "ogg", "wav", "m4a", "m4b", "aac", "opus", "mp4", "alac", "wma", "aiff"];
 
         for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {

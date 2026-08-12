@@ -7,7 +7,7 @@ description = "Fast, no-nonsense directory-based audio player for Linux"
 [dependencies]
 eframe = "0.27.2"
 egui = "0.27.2"
-rodio = { version = "0.19.0", features = ["flac", "vorbis", "wav", "mp3"] }
+rodio = { version = "0.19.0", features = ["flac", "vorbis", "wav", "mp3", "symphonia-aac", "symphonia-isomp4"] }
 walkdir = "2.5.0"
 rfd = "0.14.1"
 serde = { version = "1.0", features = ["derive"] }
@@ -18,6 +18,8 @@ image = "0.24"
 webbrowser = "1.0"
 mp3-duration = "0.1.10"
 id3 = "1.13"
+symphonia = { version = "0.5.5", features = ["all"] }
+
 
 
 [build-dependencies]

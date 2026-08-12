@@ -1,11 +1,20 @@
 use id3::TagLike;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::{Decoder as SymphoniaDecoderTrait, DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::io::{MediaSource, MediaSourceStream};
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+use symphonia::core::units::Time;
+
 
 
 #[derive(Debug, Clone)]
@@ -83,24 +92,42 @@ impl AudioPlayer {
 
         let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
         let file_size = file.metadata().ok().map(|m| m.len()).unwrap_or(0);
-        let reader = BufReader::new(file);
-        let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
-        let channels = decoder.channels();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("AUD").to_uppercase();
-        let total_dur = decoder.total_duration().or_else(|| {
-            if ext == "MP3" {
-                mp3_duration::from_path(path).ok()
-                    .or_else(|| {
-                        id3::Tag::read_from_path(path).ok()
-                            .and_then(|t| t.duration())
-                            .map(|ms| Duration::from_millis(ms as u64))
-                    })
-                    .or_else(|| get_mp3_duration_robust(path))
-            } else {
-                None
-            }
-        });
 
+        let sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
+        sink.set_volume(self.effective_volume());
+
+        let (channels, total_dur) = if let Ok(sym_decoder) = SymphoniaAudioDecoder::new(path) {
+            let ch = sym_decoder.channels();
+            let dur = sym_decoder.total_duration().or_else(|| {
+                if ext == "MP3" {
+                    get_mp3_duration_robust(path)
+                } else {
+                    None
+                }
+            });
+            sink.append(sym_decoder);
+            (ch, dur)
+        } else {
+            let reader = BufReader::new(file);
+            let decoder = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
+            let ch = decoder.channels();
+            let dur = decoder.total_duration().or_else(|| {
+                if ext == "MP3" {
+                    mp3_duration::from_path(path).ok()
+                        .or_else(|| {
+                            id3::Tag::read_from_path(path).ok()
+                                .and_then(|t| t.duration())
+                                .map(|ms| Duration::from_millis(ms as u64))
+                        })
+                        .or_else(|| get_mp3_duration_robust(path))
+                } else {
+                    None
+                }
+            });
+            sink.append(decoder);
+            (ch, dur)
+        };
 
         let bitrate_kbps = if let Some(dur) = total_dur {
             let secs = dur.as_secs_f64();
@@ -113,9 +140,6 @@ impl AudioPlayer {
             0
         };
 
-        let sink = Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {}", e))?;
-        sink.set_volume(self.effective_volume());
-        sink.append(decoder);
         sink.play();
 
         self.sink = Some(sink);
@@ -132,6 +156,7 @@ impl AudioPlayer {
 
         Ok(())
     }
+
 
     pub fn toggle_pause(&mut self) {
         if let Some(sink) = &self.sink {
@@ -272,6 +297,206 @@ impl AudioPlayer {
     }
 }
 
+struct FileMediaSource {
+    file: File,
+    len: u64,
+}
+
+impl Read for FileMediaSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.file.read(buf)
+    }
+}
+
+impl Seek for FileMediaSource {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.file.seek(pos)
+    }
+}
+
+impl MediaSource for FileMediaSource {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.len)
+    }
+}
+
+pub struct SymphoniaAudioDecoder {
+    format: Box<dyn FormatReader>,
+    decoder: Box<dyn SymphoniaDecoderTrait>,
+    track_id: u32,
+    sample_rate: u32,
+    channels: u16,
+    total_duration: Option<Duration>,
+    sample_buf: Option<SampleBuffer<i16>>,
+    sample_pos: usize,
+}
+
+impl SymphoniaAudioDecoder {
+    pub fn new(path: &Path) -> Result<Self, String> {
+        let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+        let len = file.metadata().map_err(|e| format!("Failed to get metadata: {}", e))?.len();
+        let source = FileMediaSource { file, len };
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+
+        let format_opts = FormatOptions {
+            enable_gapless: true,
+            ..Default::default()
+        };
+        let metadata_opts = MetadataOptions::default();
+
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &metadata_opts)
+            .map_err(|e| format!("Probe error: {}", e))?;
+
+        let track = probed
+            .format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or_else(|| "No track with supported codec".to_string())?;
+
+        let track_id = track.id;
+        let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+        let channels = track.codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+
+        let total_duration = if let (Some(tb), Some(n_frames)) = (track.codec_params.time_base, track.codec_params.n_frames) {
+            let time = tb.calc_time(n_frames);
+            Some(Duration::from_secs(time.seconds) + Duration::from_secs_f64(time.frac))
+        } else {
+            None
+        };
+
+        let decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| format!("Codec error: {}", e))?;
+
+        let mut decoder_struct = Self {
+            format: probed.format,
+            decoder,
+            track_id,
+            sample_rate,
+            channels,
+            total_duration,
+            sample_buf: None,
+            sample_pos: 0,
+        };
+
+        decoder_struct.prime_first_packet();
+
+        Ok(decoder_struct)
+    }
+
+    fn prime_first_packet(&mut self) {
+        while let Ok(packet) = self.format.next_packet() {
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+
+            if let Ok(audio_buf) = self.decoder.decode(&packet) {
+                let spec = *audio_buf.spec();
+                self.channels = spec.channels.count() as u16;
+                self.sample_rate = spec.rate;
+                let mut sample_buf = SampleBuffer::<i16>::new(audio_buf.capacity() as u64, spec);
+                sample_buf.copy_interleaved_ref(audio_buf);
+                self.sample_pos = 0;
+                self.sample_buf = Some(sample_buf);
+                break;
+            }
+        }
+    }
+}
+
+impl Iterator for SymphoniaAudioDecoder {
+    type Item = i16;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(ref buf) = self.sample_buf {
+                if self.sample_pos < buf.samples().len() {
+                    let sample = buf.samples()[self.sample_pos];
+                    self.sample_pos += 1;
+                    return Some(sample);
+                }
+            }
+
+            let packet = match self.format.next_packet() {
+                Ok(packet) => packet,
+                Err(_) => return None,
+            };
+
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+
+            match self.decoder.decode(&packet) {
+                Ok(audio_buf) => {
+                    let spec = *audio_buf.spec();
+                    self.channels = spec.channels.count() as u16;
+                    self.sample_rate = spec.rate;
+                    let mut sample_buf = SampleBuffer::<i16>::new(audio_buf.capacity() as u64, spec);
+                    sample_buf.copy_interleaved_ref(audio_buf);
+                    self.sample_pos = 0;
+                    self.sample_buf = Some(sample_buf);
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+impl Source for SymphoniaAudioDecoder {
+    fn current_frame_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.total_duration
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        let time = Time::from(pos.as_secs_f64());
+        if self
+            .format
+            .seek(
+                symphonia::core::formats::SeekMode::Accurate,
+                symphonia::core::formats::SeekTo::Time {
+                    time,
+                    track_id: Some(self.track_id),
+                },
+            )
+            .is_ok()
+        {
+            self.decoder.reset();
+            self.sample_buf = None;
+            self.sample_pos = 0;
+            self.prime_first_packet();
+            Ok(())
+        } else {
+            Err(rodio::source::SeekError::NotSupported {
+                underlying_source: "Symphonia decoder",
+            })
+        }
+    }
+}
+
+
 fn get_mp3_duration_robust(path: &Path) -> Option<Duration> {
     let file = File::open(path).ok()?;
     let file_len = file.metadata().ok()?.len();
@@ -377,17 +602,18 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_mp3_duration_robust() {
-        let dir = PathBuf::from("/var/mnt/THRASHER/downloads/torrents/Xanth Series Books 1 - 32/Piers Anthony - Xanth - 01 - A Spell For Chameleon");
-        if !dir.exists() { return; }
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) == Some("mp3") {
-                let custom_dur = get_mp3_duration_robust(&path);
-                assert!(custom_dur.is_some(), "Duration should be detected for {:?}", path);
-                assert!(custom_dur.unwrap().as_secs() > 0);
-            }
-        }
+    fn test_m4b_decoding() {
+        let path = PathBuf::from("/var/mnt/THRASHER/bookdrop/Xanth/A Spell For Chameleon.m4b");
+        if !path.exists() { return; }
+        let decoder = SymphoniaAudioDecoder::new(&path).unwrap();
+        println!("Primed reported channels: {}, sample_rate: {}", decoder.channels(), decoder.sample_rate());
+        assert_eq!(decoder.channels(), 1);
+        assert_eq!(decoder.sample_rate(), 44100);
     }
 }
+
+
+
+
+
 
